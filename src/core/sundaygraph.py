@@ -45,14 +45,33 @@ class SundayGraph:
         
         self.graph_store = self._create_graph_store()
         
+        # Initialize LLM service if configured
+        llm_service = None
+        if self.config.processing.llm.provider:
+            try:
+                from ..utils.llm_service import LLMService
+                llm_service = LLMService(
+                    provider=self.config.processing.llm.provider,
+                    model=self.config.processing.llm.model,
+                    temperature=self.config.processing.llm.temperature,
+                    max_tokens=self.config.processing.llm.max_tokens
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize LLM service: {e}")
+        
         # Initialize agents
         self.data_ingestion_agent = DataIngestionAgent(
             config=self.config.agents.data_ingestion.model_dump()
         )
         
+        # Merge LLM config into ontology agent config
+        ontology_config = self.config.agents.ontology.model_dump()
+        ontology_config["llm"] = self.config.processing.llm.model_dump()
+        
         self.ontology_agent = OntologyAgent(
             ontology_manager=self.ontology_manager,
-            config=self.config.agents.ontology.model_dump()
+            config=ontology_config,
+            llm_service=llm_service
         )
         
         self.graph_construction_agent = GraphConstructionAgent(

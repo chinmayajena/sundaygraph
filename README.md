@@ -5,6 +5,7 @@ A production-grade Agentic AI system that transforms structured and unstructured
 ## Features
 
 - **Multi-Format Data Ingestion**: Handles structured (JSON, CSV, XML) and unstructured (text, documents) data
+- **LLM-Powered Ontology Reasoning**: Uses thinking LLMs for intelligent entity extraction, relation discovery, and ontology mapping
 - **Ontology-Driven**: Flexible ontology management with schema validation
 - **Graph-Based Storage**: Efficient knowledge graph construction and querying
 - **Agentic Architecture**: Modular agents for specialized tasks
@@ -53,9 +54,15 @@ A production-grade Agentic AI system that transforms structured and unstructured
         ▼                    ▼                    ▼
 ┌───────────────┐  ┌───────────────┐  ┌───────────────┐
 │   Data        │  │   Ontology    │  │   Graph       │
-│   Ingestion   │  │   Management  │  │   Construction│
-│   Agent       │  │   Agent       │  │   Agent       │
+│   Ingestion   │  │   Agent       │  │   Construction│
+│   Agent       │  │  (LLM-Powered)│  │   Agent       │
 └───────┬───────┘  └───────┬───────┘  └───────┬───────┘
+        │                  │                  │
+        │                  ▼                  │
+        │          ┌──────────────┐           │
+        │          │  LLM Service │           │
+        │          │  (Thinking)  │           │
+        │          └──────────────┘           │
         │                  │                  │
         └──────────────────┼──────────────────┘
                            │
@@ -75,11 +82,12 @@ A production-grade Agentic AI system that transforms structured and unstructured
     └───────────────┘              └───────────────┘
 ```
 
-### Data Flow
+### Data Flow with LLM Reasoning
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                         Data Ingestion Flow                       │
+│                    Data Ingestion Flow                            │
+│                  (with LLM-Powered Reasoning)                    │
 └──────────────────────────────────────────────────────────────────┘
 
 1. Input Data (Structured/Unstructured)
@@ -92,16 +100,20 @@ A production-grade Agentic AI system that transforms structured and unstructured
    └─ Metadata Extraction
    │
    ▼
-3. Entity/Relation Extraction
-   ├─ Entity Type Inference
-   ├─ Property Extraction
-   └─ Relation Discovery
+3. LLM-Powered Entity/Relation Extraction
+   ├─ LLM Service (Thinking Mode)
+   │  ├─ Entity Type Inference
+   │  ├─ Property Mapping
+   │  └─ Relation Discovery
+   ├─ Ontology Schema Context
+   └─ Semantic Reasoning
    │
    ▼
-4. OntologyAgent
-   ├─ Schema Validation
-   ├─ Property Mapping
-   └─ Type Checking
+4. OntologyAgent (with LLM Reasoning)
+   ├─ LLM-based Validation
+   ├─ Intelligent Property Mapping
+   ├─ Semantic Correctness Check
+   └─ Schema Validation
    │
    ▼
 5. GraphConstructionAgent
@@ -112,78 +124,35 @@ A production-grade Agentic AI system that transforms structured and unstructured
    ▼
 6. Graph Store (Memory/Neo4j)
    └─ Persistent Storage
-
-┌──────────────────────────────────────────────────────────────────┐
-│                          Query Flow                               │
-└──────────────────────────────────────────────────────────────────┘
-
-1. Query Request (REST API)
-   │
-   ▼
-2. QueryAgent
-   ├─ Query Parsing
-   ├─ Query Type Detection
-   └─ Query Execution
-   │
-   ▼
-3. Graph Store
-   ├─ Entity Queries
-   ├─ Relation Queries
-   ├─ Path Finding
-   └─ Neighbor Queries
-   │
-   ▼
-4. Result Processing
-   ├─ Filtering
-   ├─ Ranking
-   └─ Formatting
-   │
-   ▼
-5. Response (JSON)
 ```
 
-### Component Architecture
+### LLM-Powered Features
 
-#### 1. FastAPI Layer (`src/api/`)
-- **RESTful API**: Standard HTTP endpoints for all operations
-- **Request Validation**: Pydantic models for type safety
-- **Error Handling**: Comprehensive error responses
-- **Health Checks**: System health monitoring
-- **CORS Support**: Cross-origin resource sharing
-- **Auto Documentation**: OpenAPI/Swagger UI at `/docs`
+The system uses **thinking LLMs** for:
 
-#### 2. Orchestration Layer (`src/core/`)
-- **SundayGraph**: Main orchestration class
-- **Configuration**: Centralized config management
-- **Lifecycle Management**: Startup/shutdown handling
-- **Agent Coordination**: Manages all agents
+1. **Intelligent Entity Extraction**
+   - Infers entity types from unstructured data
+   - Maps properties to ontology schema
+   - Suggests missing properties
 
-#### 3. Agentic Framework (`src/agents/`)
-- **DataIngestionAgent**: Handles data loading and processing
-- **OntologyAgent**: Validates and maps data to ontology
-- **GraphConstructionAgent**: Builds the knowledge graph
-- **QueryAgent**: Executes graph queries
+2. **Semantic Relation Discovery**
+   - Identifies relationships between entities
+   - Validates relation semantic correctness
+   - Suggests appropriate relation types
 
-#### 4. Data Processing (`src/data/`)
-- **Loaders**: Format-specific data loaders
-- **Processor**: Text chunking and metadata extraction
-- **Registry**: Extensible loader system
+3. **Ontology Reasoning**
+   - Validates entities against schema with reasoning
+   - Maps properties intelligently
+   - Suggests ontology improvements
 
-#### 5. Ontology Management (`src/ontology/`)
-- **Schema Definition**: YAML-based ontology schemas
-- **Validation**: Entity and relation validation
-- **Property Mapping**: Automatic property mapping
-
-#### 6. Graph Storage (`src/graph/`)
-- **Abstraction**: Unified interface for graph operations
-- **Memory Backend**: NetworkX for development/testing
-- **Neo4j Backend**: Production-grade graph database
+4. **Context-Aware Processing**
+   - Uses context for better entity extraction
+   - Understands domain-specific terminology
+   - Adapts to different data sources
 
 ## Quick Start
 
 ### Using Docker Compose (Recommended)
-
-The easiest way to get started is using Docker Compose:
 
 ```bash
 # Start all services (API + Neo4j)
@@ -201,51 +170,59 @@ The API will be available at:
 - **API Docs**: http://localhost:8000/docs
 - **Neo4j Browser**: http://localhost:7474
 
-### Local Development
+### Configuration
 
-#### Using UV (Recommended)
+Set up LLM provider in `config/config.yaml`:
 
-```bash
-# Install UV (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+```yaml
+processing:
+  llm:
+    provider: "openai"  # or "anthropic", "local"
+    model: "gpt-4"
+    temperature: 0.7
+    max_tokens: 2000
 
-# Install dependencies
-uv sync
-
-# Activate virtual environment
-source .venv/bin/activate
-
-# Start Neo4j (if using Neo4j backend)
-docker-compose up -d neo4j
-
-# Run API server
-uv run uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+agents:
+  ontology:
+    use_llm_reasoning: true  # Enable LLM-powered reasoning
 ```
 
-#### Using pip
-
+Set environment variables for API keys:
 ```bash
-# Install dependencies
-pip install -e ".[dev]"
-
-# Start Neo4j (if using Neo4j backend)
-docker-compose up -d neo4j
-
-# Run API server
-uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+export OPENAI_API_KEY="your-key-here"
+# or
+export ANTHROPIC_API_KEY="your-key-here"
 ```
+
+## Architecture Decision: Monolithic vs Microservices
+
+### Why Monolithic for This System?
+
+SundayGraph uses a **monolithic architecture with modular agents** because:
+
+1. **AI/ML Ecosystem Unity**: All components (LLMs, NLP, graph processing) are Python-native
+2. **Shared Context**: Agents share LLM instances, embeddings, and models efficiently
+3. **Performance**: In-process communication is faster than network calls
+4. **Simplicity**: Easier to develop, test, and deploy
+5. **Resource Efficiency**: Models loaded once, shared across agents
+
+### When Microservices Make Sense
+
+Microservices are beneficial when:
+- Different technology stacks are needed
+- Independent scaling is required
+- Team boundaries exist
+- Fault isolation is critical
+
+**See [docs/MICROSERVICES.md](docs/MICROSERVICES.md) for detailed analysis and migration guide.**
 
 ## API Usage
 
 ### Interactive API Documentation
 
-Once the server is running, visit:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+Visit http://localhost:8000/docs for interactive API documentation.
 
-### Example API Calls
-
-#### Ingest Data
+### Example: Ingest Data with LLM Reasoning
 
 ```bash
 curl -X POST "http://localhost:8000/api/v1/ingest" \
@@ -255,80 +232,11 @@ curl -X POST "http://localhost:8000/api/v1/ingest" \
   }'
 ```
 
-#### Query Entities
-
-```bash
-curl -X POST "http://localhost:8000/api/v1/query" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "Person",
-    "query_type": "entity"
-  }'
-```
-
-#### Add Entity
-
-```bash
-curl -X POST "http://localhost:8000/api/v1/entities" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "entity_type": "Person",
-    "properties": {
-      "name": "John Doe",
-      "email": "john@example.com",
-      "age": 30
-    }
-  }'
-```
-
-#### Get Statistics
-
-```bash
-curl "http://localhost:8000/api/v1/stats"
-```
-
-#### Health Check
-
-```bash
-curl "http://localhost:8000/health"
-```
-
-## Configuration
-
-### Environment Variables
-
-You can configure the system using environment variables:
-
-```bash
-# Graph backend
-GRAPH_BACKEND=neo4j  # or "memory"
-
-# Neo4j connection
-NEO4J_URI=bolt://neo4j:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=password
-
-# Logging
-LOG_LEVEL=INFO
-```
-
-### Configuration File
-
-Edit `config/config.yaml` to customize:
-
-```yaml
-graph:
-  backend: "neo4j"  # or "memory"
-  neo4j:
-    uri: "bolt://neo4j:7687"
-    user: "neo4j"
-    password: "password"
-
-agents:
-  data_ingestion:
-    batch_size: 100
-    chunk_size: 1000
-```
+The system will automatically use LLM reasoning to:
+- Extract entities intelligently
+- Map properties to ontology
+- Discover relations
+- Validate semantic correctness
 
 ## Project Structure
 
@@ -336,20 +244,16 @@ agents:
 sundaygraph/
 ├── src/
 │   ├── api/              # FastAPI application
-│   │   ├── app.py       # Main API application
-│   │   └── main.py      # Entry point
 │   ├── agents/          # Agentic components
+│   │   └── ontology_agent.py  # LLM-powered ontology agent
 │   ├── core/            # Core orchestration
 │   ├── data/            # Data processing
 │   ├── graph/           # Graph storage
 │   ├── ontology/        # Ontology management
-│   └── utils/           # Utilities
+│   └── utils/          # Utilities
+│       └── llm_service.py  # LLM service for reasoning
 ├── config/              # Configuration files
-├── tests/               # Test suite
-├── examples/            # Example scripts
-├── docs/                # Documentation
 ├── docker-compose.yml   # Docker Compose setup
-├── Dockerfile           # Application container
 └── pyproject.toml       # Project dependencies
 ```
 
@@ -358,89 +262,23 @@ sundaygraph/
 ### Running Tests
 
 ```bash
-# With UV
 uv run pytest
-
-# With pip
-pytest tests/
 ```
 
 ### Code Formatting
 
 ```bash
-# With UV
 uv run black src/ tests/
 uv run ruff check src/ tests/
-
-# With pip
-black src/ tests/
-ruff check src/ tests/
 ```
-
-### Type Checking
-
-```bash
-# With UV
-uv run mypy src/
-
-# With pip
-mypy src/
-```
-
-## Deployment
-
-### Docker Compose (Production)
-
-```bash
-# Build and start
-docker-compose up -d --build
-
-# View logs
-docker-compose logs -f
-
-# Stop
-docker-compose down
-```
-
-### Docker (Standalone)
-
-```bash
-# Build image
-docker build -t sundaygraph .
-
-# Run container
-docker run -p 8000:8000 \
-  -v $(pwd)/config:/app/config:ro \
-  -v $(pwd)/data:/app/data \
-  sundaygraph
-```
-
-## Performance Considerations
-
-- **Async I/O**: All operations use async/await for non-blocking I/O
-- **Batch Processing**: Graph operations are batched for efficiency
-- **Caching**: Entity deduplication and result caching
-- **Graph Backend**: Neo4j handles heavy graph operations efficiently
-- **Connection Pooling**: Neo4j connection pooling for better performance
-
-## Monitoring
-
-- **Health Endpoint**: `/health` for health checks
-- **Stats Endpoint**: `/api/v1/stats` for system statistics
-- **Logging**: Structured logging with loguru
-- **Metrics**: Can be extended with Prometheus metrics
 
 ## License
 
 MIT License
 
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
-
 ## Documentation
 
-- [Quick Start Guide](QUICKSTART.md)
 - [Usage Guide](docs/USAGE.md)
 - [Architecture Documentation](docs/ARCHITECTURE.md)
+- [Microservices Analysis](docs/MICROSERVICES.md)
 - [Design Decisions](docs/DESIGN_DECISIONS.md)

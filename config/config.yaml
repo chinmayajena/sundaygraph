@@ -51,6 +51,7 @@ agents:
     strict_mode: false
     auto_map_properties: true
     validation_level: "medium"  # Options: "strict", "medium", "loose"
+    use_llm_reasoning: true  # Use LLM for intelligent reasoning
     
   graph_construction:
     enabled: true

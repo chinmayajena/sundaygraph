@@ -58,8 +58,6 @@ llm = [
     "anthropic>=0.18.0",
 ]
 
-[project.scripts]
-sundaygraph = "cli:cli"
 
 [tool.black]
 line-length = 100
