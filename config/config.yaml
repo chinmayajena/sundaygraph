@@ -24,12 +24,12 @@ ontology:
   allow_custom_properties: true
 
 graph:
-  backend: "memory"  # Options: "memory", "neo4j"
+  backend: "neo4j"  # Options: "memory", "neo4j"
   memory:
     directed: true
     multigraph: false
   neo4j:
-    uri: "bolt://localhost:7687"
+    uri: "bolt://neo4j:7687"  # Use service name in Docker
     user: "neo4j"
     password: "password"
     database: "neo4j"
@@ -87,4 +87,3 @@ storage:
   graph_file: "./data/graph.pkl"
   backup_enabled: true
   backup_interval_hours: 24
-

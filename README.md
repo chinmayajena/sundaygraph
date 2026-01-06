@@ -8,118 +8,326 @@ A production-grade Agentic AI system that transforms structured and unstructured
 - **Ontology-Driven**: Flexible ontology management with schema validation
 - **Graph-Based Storage**: Efficient knowledge graph construction and querying
 - **Agentic Architecture**: Modular agents for specialized tasks
+- **RESTful API**: FastAPI-based API for easy integration
+- **Docker Support**: Complete Docker Compose setup with Neo4j
 - **Production-Ready**: Configurable, maintainable, and scalable design
 - **High Performance**: Async processing and optimized graph operations
 
-## Why Python?
+## Technical Architecture
 
-Python was chosen for this project because:
-- **AI/ML Ecosystem**: Native support for NLP libraries (spaCy, NLTK, transformers)
-- **Graph Libraries**: Excellent graph processing tools (NetworkX, Neo4j drivers)
-- **LLM Integration**: Seamless integration with OpenAI, Anthropic, and other LLM APIs
-- **RAG Ecosystem**: Most RAG frameworks (including LightRAG) are Python-native
-- **Rapid Development**: Faster prototyping and iteration for AI/ML projects
-- **Community**: Largest ecosystem for AI/ML and data processing
+### System Architecture
 
-While Go and Rust offer better performance, Python's ecosystem for AI/ML, NLP, and graph processing is unmatched, making it the pragmatic choice for this domain.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Client Layer                             │
+│  (Web UI, Mobile App, CLI, External Services)                  │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ HTTP/REST
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      FastAPI Layer                              │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  REST API Endpoints                                        │  │
+│  │  - /api/v1/ingest    - Data ingestion                      │  │
+│  │  - /api/v1/query     - Graph queries                       │  │
+│  │  - /api/v1/entities  - Entity management                   │  │
+│  │  - /api/v1/relations - Relation management                │  │
+│  │  - /api/v1/stats     - System statistics                  │  │
+│  │  - /health          - Health checks                        │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Orchestration Layer                            │
+│                      (SundayGraph)                               │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  Configuration Manager                                     │  │
+│  │  - YAML-based config                                       │  │
+│  │  - Environment variables                                   │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+        ┌────────────────────┼────────────────────┐
+        │                    │                    │
+        ▼                    ▼                    ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│   Data        │  │   Ontology    │  │   Graph       │
+│   Ingestion   │  │   Management  │  │   Construction│
+│   Agent       │  │   Agent       │  │   Agent       │
+└───────┬───────┘  └───────┬───────┘  └───────┬───────┘
+        │                  │                  │
+        └──────────────────┼──────────────────┘
+                           │
+                           ▼
+                ┌──────────────────────┐
+                │    Graph Store        │
+                │  (Abstraction Layer)   │
+                └───────────┬───────────┘
+                            │
+            ┌───────────────┴───────────────┐
+            │                               │
+            ▼                               ▼
+    ┌───────────────┐              ┌───────────────┐
+    │  Memory       │              │  Neo4j         │
+    │  Graph Store  │              │  Graph Store    │
+    │  (NetworkX)   │              │  (Production)   │
+    └───────────────┘              └───────────────┘
+```
 
-## Installation
+### Data Flow
 
-### Using UV (Recommended)
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         Data Ingestion Flow                       │
+└──────────────────────────────────────────────────────────────────┘
 
-[UV](https://github.com/astral-sh/uv) is a fast, modern Python package manager written in Rust. It's significantly faster than pip and provides better dependency resolution.
+1. Input Data (Structured/Unstructured)
+   │
+   ▼
+2. DataIngestionAgent
+   ├─ Format Detection (JSON, CSV, TXT, XML, PDF)
+   ├─ File Loading
+   ├─ Text Chunking (for large documents)
+   └─ Metadata Extraction
+   │
+   ▼
+3. Entity/Relation Extraction
+   ├─ Entity Type Inference
+   ├─ Property Extraction
+   └─ Relation Discovery
+   │
+   ▼
+4. OntologyAgent
+   ├─ Schema Validation
+   ├─ Property Mapping
+   └─ Type Checking
+   │
+   ▼
+5. GraphConstructionAgent
+   ├─ Entity Deduplication
+   ├─ Batch Insertion
+   └─ Relation Creation
+   │
+   ▼
+6. Graph Store (Memory/Neo4j)
+   └─ Persistent Storage
+
+┌──────────────────────────────────────────────────────────────────┐
+│                          Query Flow                               │
+└──────────────────────────────────────────────────────────────────┘
+
+1. Query Request (REST API)
+   │
+   ▼
+2. QueryAgent
+   ├─ Query Parsing
+   ├─ Query Type Detection
+   └─ Query Execution
+   │
+   ▼
+3. Graph Store
+   ├─ Entity Queries
+   ├─ Relation Queries
+   ├─ Path Finding
+   └─ Neighbor Queries
+   │
+   ▼
+4. Result Processing
+   ├─ Filtering
+   ├─ Ranking
+   └─ Formatting
+   │
+   ▼
+5. Response (JSON)
+```
+
+### Component Architecture
+
+#### 1. FastAPI Layer (`src/api/`)
+- **RESTful API**: Standard HTTP endpoints for all operations
+- **Request Validation**: Pydantic models for type safety
+- **Error Handling**: Comprehensive error responses
+- **Health Checks**: System health monitoring
+- **CORS Support**: Cross-origin resource sharing
+- **Auto Documentation**: OpenAPI/Swagger UI at `/docs`
+
+#### 2. Orchestration Layer (`src/core/`)
+- **SundayGraph**: Main orchestration class
+- **Configuration**: Centralized config management
+- **Lifecycle Management**: Startup/shutdown handling
+- **Agent Coordination**: Manages all agents
+
+#### 3. Agentic Framework (`src/agents/`)
+- **DataIngestionAgent**: Handles data loading and processing
+- **OntologyAgent**: Validates and maps data to ontology
+- **GraphConstructionAgent**: Builds the knowledge graph
+- **QueryAgent**: Executes graph queries
+
+#### 4. Data Processing (`src/data/`)
+- **Loaders**: Format-specific data loaders
+- **Processor**: Text chunking and metadata extraction
+- **Registry**: Extensible loader system
+
+#### 5. Ontology Management (`src/ontology/`)
+- **Schema Definition**: YAML-based ontology schemas
+- **Validation**: Entity and relation validation
+- **Property Mapping**: Automatic property mapping
+
+#### 6. Graph Storage (`src/graph/`)
+- **Abstraction**: Unified interface for graph operations
+- **Memory Backend**: NetworkX for development/testing
+- **Neo4j Backend**: Production-grade graph database
+
+## Quick Start
+
+### Using Docker Compose (Recommended)
+
+The easiest way to get started is using Docker Compose:
+
+```bash
+# Start all services (API + Neo4j)
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f sundaygraph
+
+# Stop services
+docker-compose down
+```
+
+The API will be available at:
+- **API**: http://localhost:8000
+- **API Docs**: http://localhost:8000/docs
+- **Neo4j Browser**: http://localhost:7474
+
+### Local Development
+
+#### Using UV (Recommended)
 
 ```bash
 # Install UV (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
-# Or: pip install uv
 
 # Install dependencies
 uv sync
 
 # Activate virtual environment
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
+
+# Start Neo4j (if using Neo4j backend)
+docker-compose up -d neo4j
+
+# Run API server
+uv run uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Using pip (Alternative)
+#### Using pip
 
 ```bash
-# Install from pyproject.toml
-pip install -e .
-# Or for production
-pip install .
+# Install dependencies
+pip install -e ".[dev]"
+
+# Start Neo4j (if using Neo4j backend)
+docker-compose up -d neo4j
+
+# Run API server
+uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Additional Setup
+## API Usage
 
-Install spaCy model (optional, for NLP features):
+### Interactive API Documentation
+
+Once the server is running, visit:
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+
+### Example API Calls
+
+#### Ingest Data
+
 ```bash
-python -m spacy download en_core_web_sm
+curl -X POST "http://localhost:8000/api/v1/ingest" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_path": "data/input"
+  }'
 ```
 
-## Quick Start
+#### Query Entities
 
-### Configuration
+```bash
+curl -X POST "http://localhost:8000/api/v1/query" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "Person",
+    "query_type": "entity"
+  }'
+```
 
-Create a `config.yaml` file:
+#### Add Entity
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/entities" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "entity_type": "Person",
+    "properties": {
+      "name": "John Doe",
+      "email": "john@example.com",
+      "age": 30
+    }
+  }'
+```
+
+#### Get Statistics
+
+```bash
+curl "http://localhost:8000/api/v1/stats"
+```
+
+#### Health Check
+
+```bash
+curl "http://localhost:8000/health"
+```
+
+## Configuration
+
+### Environment Variables
+
+You can configure the system using environment variables:
+
+```bash
+# Graph backend
+GRAPH_BACKEND=neo4j  # or "memory"
+
+# Neo4j connection
+NEO4J_URI=bolt://neo4j:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=password
+
+# Logging
+LOG_LEVEL=INFO
+```
+
+### Configuration File
+
+Edit `config/config.yaml` to customize:
 
 ```yaml
-system:
-  name: "sundaygraph"
-  log_level: "INFO"
-  
-data:
-  input_dir: "./data/input"
-  output_dir: "./data/output"
-  supported_formats: ["json", "csv", "txt", "xml", "pdf"]
-  
-ontology:
-  schema_path: "./config/ontology_schema.yaml"
-  auto_validate: true
-  
 graph:
   backend: "neo4j"  # or "memory"
   neo4j:
-    uri: "bolt://localhost:7687"
+    uri: "bolt://neo4j:7687"
     user: "neo4j"
     password: "password"
-  
+
 agents:
   data_ingestion:
     batch_size: 100
-    max_workers: 4
-  ontology:
-    strict_mode: false
-  graph_construction:
     chunk_size: 1000
-    overlap: 200
-```
-
-### Basic Usage
-
-```python
-from sundaygraph import SundayGraph
-
-# Initialize system
-sg = SundayGraph(config_path="config.yaml")
-
-# Ingest data
-sg.ingest_data("path/to/data")
-
-# Query the graph
-results = sg.query("What are the main entities?")
-```
-
-### CLI Usage
-
-```bash
-# Using UV
-uv run sundaygraph ingest data/input
-uv run sundaygraph query "Person" --type entity
-
-# Or activate venv first
-source .venv/bin/activate
-sundaygraph ingest data/input
 ```
 
 ## Project Structure
@@ -127,58 +335,112 @@ sundaygraph ingest data/input
 ```
 sundaygraph/
 ├── src/
+│   ├── api/              # FastAPI application
+│   │   ├── app.py       # Main API application
+│   │   └── main.py      # Entry point
 │   ├── agents/          # Agentic components
-│   ├── core/            # Core functionality
-│   ├── graph/           # Graph operations
+│   ├── core/            # Core orchestration
+│   ├── data/            # Data processing
+│   ├── graph/           # Graph storage
 │   ├── ontology/        # Ontology management
 │   └── utils/           # Utilities
 ├── config/              # Configuration files
 ├── tests/               # Test suite
 ├── examples/            # Example scripts
-└── docs/                # Documentation
+├── docs/                # Documentation
+├── docker-compose.yml   # Docker Compose setup
+├── Dockerfile           # Application container
+└── pyproject.toml       # Project dependencies
 ```
 
 ## Development
 
-### With UV
+### Running Tests
 
 ```bash
-# Install with dev dependencies
-uv sync --dev
-
-# Run tests
+# With UV
 uv run pytest
 
-# Format code
-uv run black src/ tests/
-
-# Type check
-uv run mypy src/
+# With pip
+pytest tests/
 ```
 
-### With pip
+### Code Formatting
 
 ```bash
-pip install -e ".[dev]"
-pytest tests/
+# With UV
+uv run black src/ tests/
+uv run ruff check src/ tests/
+
+# With pip
 black src/ tests/
+ruff check src/ tests/
+```
+
+### Type Checking
+
+```bash
+# With UV
+uv run mypy src/
+
+# With pip
 mypy src/
 ```
 
-## Performance Notes
+## Deployment
 
-While Python may not match Go/Rust in raw performance, this system is optimized for:
-- **Async I/O**: Non-blocking operations for data processing
-- **Batch Processing**: Efficient batch inserts and queries
+### Docker Compose (Production)
+
+```bash
+# Build and start
+docker-compose up -d --build
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
+```
+
+### Docker (Standalone)
+
+```bash
+# Build image
+docker build -t sundaygraph .
+
+# Run container
+docker run -p 8000:8000 \
+  -v $(pwd)/config:/app/config:ro \
+  -v $(pwd)/data:/app/data \
+  sundaygraph
+```
+
+## Performance Considerations
+
+- **Async I/O**: All operations use async/await for non-blocking I/O
+- **Batch Processing**: Graph operations are batched for efficiency
 - **Caching**: Entity deduplication and result caching
 - **Graph Backend**: Neo4j handles heavy graph operations efficiently
+- **Connection Pooling**: Neo4j connection pooling for better performance
 
-For maximum performance in production:
-- Use Neo4j backend (not in-memory)
-- Enable batch processing
-- Use async operations
-- Consider using PyPy or Cython for hot paths (if needed)
+## Monitoring
+
+- **Health Endpoint**: `/health` for health checks
+- **Stats Endpoint**: `/api/v1/stats` for system statistics
+- **Logging**: Structured logging with loguru
+- **Metrics**: Can be extended with Prometheus metrics
 
 ## License
 
 MIT License
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+
+## Documentation
+
+- [Quick Start Guide](QUICKSTART.md)
+- [Usage Guide](docs/USAGE.md)
+- [Architecture Documentation](docs/ARCHITECTURE.md)
+- [Design Decisions](docs/DESIGN_DECISIONS.md)
