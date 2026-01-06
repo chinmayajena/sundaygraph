@@ -1,0 +1,138 @@
+# Ontology Schema Definition
+# This defines the structure of entities, relations, and properties
+
+version: "1.0.0"
+
+entities:
+  - name: "Person"
+    description: "A human being"
+    properties:
+      - name: "name"
+        type: "string"
+        required: true
+        indexed: true
+      - name: "age"
+        type: "integer"
+        required: false
+      - name: "email"
+        type: "string"
+        required: false
+        indexed: true
+      - name: "bio"
+        type: "text"
+        required: false
+        
+  - name: "Organization"
+    description: "A company, institution, or group"
+    properties:
+      - name: "name"
+        type: "string"
+        required: true
+        indexed: true
+      - name: "type"
+        type: "string"
+        required: false
+      - name: "founded"
+        type: "date"
+        required: false
+      - name: "description"
+        type: "text"
+        required: false
+        
+  - name: "Document"
+    description: "A text document or file"
+    properties:
+      - name: "title"
+        type: "string"
+        required: true
+        indexed: true
+      - name: "content"
+        type: "text"
+        required: true
+      - name: "source"
+        type: "string"
+        required: false
+      - name: "created_at"
+        type: "datetime"
+        required: false
+        indexed: true
+        
+  - name: "Concept"
+    description: "An abstract concept or topic"
+    properties:
+      - name: "label"
+        type: "string"
+        required: true
+        indexed: true
+      - name: "description"
+        type: "text"
+        required: false
+      - name: "category"
+        type: "string"
+        required: false
+        indexed: true
+
+relations:
+  - name: "WORKS_FOR"
+    description: "Person works for Organization"
+    source: "Person"
+    target: "Organization"
+    properties:
+      - name: "role"
+        type: "string"
+        required: false
+      - name: "start_date"
+        type: "date"
+        required: false
+      - name: "end_date"
+        type: "date"
+        required: false
+        
+  - name: "MENTIONS"
+    description: "Document mentions Entity"
+    source: "Document"
+    target: ["Person", "Organization", "Concept"]
+    properties:
+      - name: "count"
+        type: "integer"
+        required: false
+      - name: "context"
+        type: "text"
+        required: false
+        
+  - name: "RELATED_TO"
+    description: "Generic relation between entities"
+    source: "*"
+    target: "*"
+    properties:
+      - name: "strength"
+        type: "float"
+        required: false
+      - name: "evidence"
+        type: "text"
+        required: false
+        
+  - name: "CONTAINS"
+    description: "Entity contains another entity"
+    source: "*"
+    target: "*"
+    properties:
+      - name: "position"
+        type: "integer"
+        required: false
+
+hierarchies:
+  - parent: "Entity"
+    children: ["Person", "Organization", "Document", "Concept"]
+
+constraints:
+  - type: "unique"
+    entity: "Person"
+    property: "email"
+    
+  - type: "range"
+    entity: "Person"
+    property: "age"
+    min: 0
+    max: 150
+

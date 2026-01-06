@@ -1,0 +1,90 @@
+system:
+  name: "sundaygraph"
+  version: "1.0.0"
+  log_level: "INFO"
+  log_file: "logs/sundaygraph.log"
+
+data:
+  input_dir: "./data/input"
+  output_dir: "./data/output"
+  cache_dir: "./data/cache"
+  supported_formats:
+    - json
+    - csv
+    - txt
+    - xml
+    - pdf
+    - docx
+  max_file_size_mb: 100
+
+ontology:
+  schema_path: "./config/ontology_schema.yaml"
+  auto_validate: true
+  strict_mode: false
+  allow_custom_properties: true
+
+graph:
+  backend: "memory"  # Options: "memory", "neo4j"
+  memory:
+    directed: true
+    multigraph: false
+  neo4j:
+    uri: "bolt://localhost:7687"
+    user: "neo4j"
+    password: "password"
+    database: "neo4j"
+    max_connection_lifetime: 3600
+    max_connection_pool_size: 50
+
+agents:
+  data_ingestion:
+    enabled: true
+    batch_size: 100
+    max_workers: 4
+    chunk_size: 1000
+    overlap: 200
+    extract_entities: true
+    extract_relations: true
+    
+  ontology:
+    enabled: true
+    strict_mode: false
+    auto_map_properties: true
+    validation_level: "medium"  # Options: "strict", "medium", "loose"
+    
+  graph_construction:
+    enabled: true
+    batch_insert_size: 1000
+    create_indexes: true
+    deduplicate_entities: true
+    merge_relations: true
+    
+  query:
+    enabled: true
+    max_results: 100
+    similarity_threshold: 0.7
+    use_semantic_search: true
+
+processing:
+  nlp:
+    model: "en_core_web_sm"
+    use_gpu: false
+    batch_size: 32
+    
+  embedding:
+    model: "sentence-transformers/all-MiniLM-L6-v2"
+    dimension: 384
+    device: "cpu"
+    
+  llm:
+    provider: "openai"  # Options: "openai", "anthropic", "local"
+    model: "gpt-4"
+    temperature: 0.7
+    max_tokens: 2000
+
+storage:
+  persist_graph: true
+  graph_file: "./data/graph.pkl"
+  backup_enabled: true
+  backup_interval_hours: 24
+
