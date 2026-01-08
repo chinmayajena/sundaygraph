@@ -5,20 +5,23 @@ from loguru import logger
 import json
 
 from .schema import OntologySchema, Entity, Relation, Property
+from .evaluation_metrics import OntologyEvaluator
 from ..utils.llm_service import LLMService
 
 
 class OntologySchemaBuilder:
     """Builds ontology schema using LLM reasoning"""
     
-    def __init__(self, llm_service: LLMService):
+    def __init__(self, llm_service: LLMService, enable_evaluation: bool = True):
         """
         Initialize schema builder
         
         Args:
             llm_service: LLM service for reasoning
+            enable_evaluation: Whether to enable quality evaluation
         """
         self.llm_service = llm_service
+        self.evaluator = OntologyEvaluator() if enable_evaluation else None
     
     async def build_schema_from_domain(
         self,
@@ -90,7 +93,13 @@ Format your response as JSON matching this structure:
 
 Provide a complete ontology schema in JSON format."""
         
-        response = await self.llm_service.think(prompt, system_prompt=system_prompt)
+        # Use medium complexity for schema building (can use cheaper models)
+        response = await self.llm_service.think(
+            prompt,
+            system_prompt=system_prompt,
+            task_complexity="medium",
+            use_cache=True
+        )
         
         # Parse LLM response
         schema_dict = self._parse_llm_response(response)
@@ -98,7 +107,24 @@ Provide a complete ontology schema in JSON format."""
         # Convert to OntologySchema
         schema = self._dict_to_schema(schema_dict, existing_schema)
         
-        logger.info(f"Built schema with {len(schema.entities)} entities and {len(schema.relations)} relations")
+        # Evaluate schema quality
+        if self.evaluator:
+            evaluation = self.evaluator.evaluate_schema(schema, domain_description)
+            quality_score = evaluation.get("quality_score", {}).get("score", 0.0)
+            grade = evaluation.get("quality_score", {}).get("grade", "N/A")
+            logger.info(
+                f"Built schema with {len(schema.entities)} entities and {len(schema.relations)} relations | "
+                f"Quality: {grade} ({quality_score:.2%})"
+            )
+            
+            # Log recommendations if quality is low
+            if quality_score < 0.7:
+                recommendations = evaluation.get("quality_score", {}).get("recommendations", [])
+                if recommendations:
+                    logger.warning(f"Schema quality recommendations: {recommendations[:3]}")
+        else:
+            logger.info(f"Built schema with {len(schema.entities)} entities and {len(schema.relations)} relations")
+        
         return schema
     
     async def evolve_schema(
@@ -141,10 +167,24 @@ Feedback: {feedback or "None"}
 
 Evolve the schema to better accommodate this data. Provide the complete evolved schema in JSON format."""
         
-        response = await self.llm_service.think(prompt, system_prompt=system_prompt)
+        # Use medium complexity for schema evolution
+        response = await self.llm_service.think(
+            prompt,
+            system_prompt=system_prompt,
+            task_complexity="medium",
+            use_cache=False  # Don't cache evolution requests
+        )
         schema_dict = self._parse_llm_response(response)
         
-        return self._dict_to_schema(schema_dict, current_schema)
+        evolved_schema = self._dict_to_schema(schema_dict, current_schema)
+        
+        # Evaluate evolved schema
+        if self.evaluator:
+            evaluation = self.evaluator.evaluate_schema(evolved_schema)
+            quality_score = evaluation.get("quality_score", {}).get("score", 0.0)
+            logger.info(f"Evolved schema quality: {quality_score:.2%}")
+        
+        return evolved_schema
     
     async def suggest_improvements(
         self,

@@ -4,11 +4,22 @@ from typing import Dict, Any, List, Optional
 from loguru import logger
 import json
 
+from .llm_cost_optimizer import LLMCostOptimizer
+
 
 class LLMService:
     """Service for LLM-based thinking and reasoning"""
     
-    def __init__(self, provider: str = "openai", model: str = "gpt-4", temperature: float = 0.7, max_tokens: int = 2000):
+    def __init__(
+        self,
+        provider: str = "openai",
+        model: str = "gpt-4",
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        enable_cache: bool = True,
+        cache_ttl: int = 3600,
+        cost_optimizer: Optional[LLMCostOptimizer] = None
+    ):
         """
         Initialize LLM service
         
@@ -17,12 +28,19 @@ class LLMService:
             model: Model name
             temperature: Temperature for generation
             max_tokens: Maximum tokens
+            enable_cache: Enable response caching
+            cache_ttl: Cache time-to-live in seconds
+            cost_optimizer: Optional cost optimizer instance
         """
         self.provider = provider
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
         self._client = None
+        self.cost_optimizer = cost_optimizer or LLMCostOptimizer(
+            cache_ttl=cache_ttl,
+            enable_cache=enable_cache
+        )
         self._initialize_client()
     
     def _initialize_client(self):
@@ -64,15 +82,19 @@ class LLMService:
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
-        thinking_mode: bool = True
+        thinking_mode: bool = True,
+        use_cache: bool = True,
+        task_complexity: str = "medium"
     ) -> str:
         """
-        Use LLM for thinking/reasoning
+        Use LLM for thinking/reasoning with cost optimization
         
         Args:
             prompt: User prompt
             system_prompt: System prompt for context
             thinking_mode: Whether to use thinking/reasoning mode
+            use_cache: Whether to use cached responses
+            task_complexity: Task complexity for model selection ("simple", "medium", "complex")
             
         Returns:
             LLM response
@@ -81,20 +103,69 @@ class LLMService:
             logger.warning("LLM client not initialized, returning empty response")
             return ""
         
+        # Optimize prompt
+        optimized_prompt = self.cost_optimizer.optimize_prompt(prompt)
+        
+        # Check cache
+        if use_cache:
+            cached = self.cost_optimizer.get_cached_response(
+                optimized_prompt,
+                system_prompt,
+                self.model
+            )
+            if cached is not None:
+                return cached
+        
+        # Select model based on complexity (if different from default)
+        model_to_use = self.model
+        if task_complexity != "complex" and "gpt-4" in self.model:
+            # Use cheaper model for simple/medium tasks
+            model_to_use = self.cost_optimizer.select_model(task_complexity, prefer_cheap=True)
+            logger.debug(f"Using {model_to_use} for {task_complexity} complexity task")
+        
         try:
             if self.provider == "openai":
                 messages = []
                 if system_prompt:
                     messages.append({"role": "system", "content": system_prompt})
-                messages.append({"role": "user", "content": prompt})
+                messages.append({"role": "user", "content": optimized_prompt})
+                
+                # Estimate input tokens
+                input_tokens = self.cost_optimizer._estimate_tokens(
+                    (system_prompt or "") + optimized_prompt
+                )
                 
                 response = self._client.chat.completions.create(
-                    model=self.model,
+                    model=model_to_use,
                     messages=messages,
                     temperature=self.temperature,
                     max_tokens=self.max_tokens
                 )
-                return response.choices[0].message.content
+                
+                result = response.choices[0].message.content
+                
+                # Track usage
+                output_tokens = response.usage.completion_tokens if hasattr(response, 'usage') else \
+                    self.cost_optimizer._estimate_tokens(result)
+                input_tokens = response.usage.prompt_tokens if hasattr(response, 'usage') else input_tokens
+                
+                self.cost_optimizer.track_request(
+                    model_to_use,
+                    input_tokens,
+                    output_tokens,
+                    cached=False
+                )
+                
+                # Cache response
+                if use_cache:
+                    self.cost_optimizer.cache_response(
+                        optimized_prompt,
+                        result,
+                        system_prompt,
+                        model_to_use
+                    )
+                
+                return result
             
             elif self.provider == "anthropic":
                 system_msg = system_prompt or ""

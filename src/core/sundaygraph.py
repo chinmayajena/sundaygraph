@@ -46,11 +46,22 @@ class SundayGraph:
                 from ..utils.llm_service import LLMService
                 import os
                 api_key = os.getenv("OPENAI_API_KEY") if self.config.processing.llm.provider == "openai" else None
+                
+                # Get cost optimization settings from config
+                enable_cache = getattr(self.config.processing.llm, 'enable_cache', True)
+                cache_ttl = getattr(self.config.processing.llm, 'cache_ttl', 3600)
+                
                 llm_service = LLMService(
                     provider=self.config.processing.llm.provider,
                     model=self.config.processing.llm.model,
                     temperature=self.config.processing.llm.temperature,
-                    max_tokens=self.config.processing.llm.max_tokens
+                    max_tokens=self.config.processing.llm.max_tokens,
+                    enable_cache=enable_cache,
+                    cache_ttl=cache_ttl
+                )
+                logger.info(
+                    f"LLM service initialized: {self.config.processing.llm.provider}/{self.config.processing.llm.model} "
+                    f"(cache: {enable_cache}, TTL: {cache_ttl}s)"
                 )
                 self.llm_service = llm_service
             except Exception as e:
@@ -78,11 +89,15 @@ class SundayGraph:
             except Exception as e:
                 logger.warning(f"Failed to initialize schema store: {e}")
         
-        # Initialize schema builder (LLM-powered)
+        # Initialize schema builder (LLM-powered) with evaluation enabled
         self.schema_builder = None
         if self.llm_service and self.config.ontology.build_with_llm:
-            self.schema_builder = OntologySchemaBuilder(self.llm_service)
-            logger.info("Schema builder (LLM-powered) initialized")
+            enable_evaluation = getattr(self.config.ontology, 'enable_evaluation', True)
+            self.schema_builder = OntologySchemaBuilder(
+                self.llm_service,
+                enable_evaluation=enable_evaluation
+            )
+            logger.info(f"Schema builder (LLM-powered) initialized (evaluation: {enable_evaluation})")
         
         # Load or build ontology schema
         self.ontology_manager = self._initialize_ontology()

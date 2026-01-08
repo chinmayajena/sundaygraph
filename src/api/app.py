@@ -290,6 +290,72 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             logger.error(f"Query failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
+    @app.get("/api/v1/ontology/evaluate", response_model=Response, tags=["Ontology"])
+    async def evaluate_ontology(domain_description: Optional[str] = None):
+        """
+        Evaluate ontology schema quality
+        
+        - **domain_description**: Optional domain description for context
+        """
+        try:
+            sg = get_sundaygraph()
+            schema = sg.ontology_manager.get_schema()
+            
+            from ..ontology.evaluation_metrics import OntologyEvaluator
+            evaluator = OntologyEvaluator()
+            evaluation = evaluator.evaluate_schema(schema, domain_description)
+            
+            return Response(
+                success=True,
+                message="Ontology evaluation completed",
+                data=evaluation
+            )
+        except Exception as e:
+            logger.error(f"Ontology evaluation failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/api/v1/llm/cost-stats", response_model=Response, tags=["LLM"])
+    async def get_llm_cost_stats():
+        """Get LLM cost and usage statistics"""
+        try:
+            sg = get_sundaygraph()
+            if not sg.llm_service or not sg.llm_service.cost_optimizer:
+                return Response(
+                    success=False,
+                    message="LLM cost tracking not available",
+                    data=None
+                )
+            
+            stats = sg.llm_service.cost_optimizer.get_stats()
+            return Response(
+                success=True,
+                message="LLM cost statistics",
+                data=stats
+            )
+        except Exception as e:
+            logger.error(f"Failed to get LLM cost stats: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.post("/api/v1/llm/reset-stats", response_model=Response, tags=["LLM"])
+    async def reset_llm_stats():
+        """Reset LLM cost statistics"""
+        try:
+            sg = get_sundaygraph()
+            if sg.llm_service and sg.llm_service.cost_optimizer:
+                sg.llm_service.cost_optimizer.reset_stats()
+                return Response(
+                    success=True,
+                    message="LLM cost statistics reset"
+                )
+            else:
+                return Response(
+                    success=False,
+                    message="LLM cost tracking not available"
+                )
+        except Exception as e:
+            logger.error(f"Failed to reset LLM stats: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
     @app.get("/api/v1/stats", response_model=Response, tags=["Stats"])
     async def get_stats():
         """Get system statistics"""
@@ -607,18 +673,25 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/v1/workspaces/{workspace_id}/files/{filename}/preview", response_model=Response, tags=["Files"])
-    async def get_file_preview(workspace_id: str, filename: str, subdir: str = "input", max_lines: int = 50):
+    async def get_file_preview(
+        workspace_id: str,
+        filename: str,
+        subdir: str = "input",
+        max_lines: int = 1000,  # Increased for better preview
+        username: str = "admin"
+    ):
         """
         Get file preview
         
         - **workspace_id**: Workspace identifier
         - **filename**: File name
         - **subdir**: Subdirectory (input, output, cache, graphs)
-        - **max_lines**: Maximum lines to preview
+        - **max_lines**: Maximum lines to preview (default: 1000)
+        - **username**: Username (default: "admin")
         """
         try:
             wm = get_workspace_manager()
-            preview = wm.get_file_preview(workspace_id, filename, subdir, max_lines)
+            preview = wm.get_file_preview(workspace_id, filename, subdir, max_lines, username=username)
             return Response(
                 success=True,
                 message="File preview retrieved",
@@ -632,21 +705,72 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             logger.error(f"Failed to get file preview: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    @app.post("/api/v1/workspaces/{workspace_id}/upload", tags=["Files"])
-    async def upload_workspace_files(workspace_id: str, files: List[UploadFile] = File(...)):
+    @app.get("/api/v1/workspaces/{workspace_id}/files/{filename}/download", tags=["Files"])
+    async def download_file(
+        workspace_id: str,
+        filename: str,
+        subdir: str = "input",
+        username: str = "admin"
+    ):
         """
-        Upload files to workspace
+        Download/serve file for preview (PDF, images, etc.)
+        
+        - **workspace_id**: Workspace identifier
+        - **filename**: File name
+        - **subdir**: Subdirectory (input, output, cache, graphs)
+        - **username**: Username (default: "admin")
+        """
+        try:
+            from fastapi.responses import FileResponse
+            wm = get_workspace_manager()
+            workspace_path = wm.get_workspace_path(workspace_id, subdir, username=username)
+            file_path = workspace_path / filename
+            
+            if not file_path.exists():
+                raise HTTPException(status_code=404, detail="File not found")
+            
+            # Determine media type
+            media_type = None
+            if filename.lower().endswith('.pdf'):
+                media_type = "application/pdf"
+            elif filename.lower().endswith('.json'):
+                media_type = "application/json"
+            elif filename.lower().endswith('.csv'):
+                media_type = "text/csv"
+            elif filename.lower().endswith('.txt'):
+                media_type = "text/plain"
+            
+            return FileResponse(
+                str(file_path),
+                media_type=media_type,
+                filename=filename
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to serve file: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.post("/api/v1/workspaces/{workspace_id}/upload", tags=["Files"])
+    async def upload_workspace_files(
+        workspace_id: str,
+        files: List[UploadFile] = File(...),
+        username: str = "admin"
+    ):
+        """
+        Upload files to workspace (database-backed)
         
         - **workspace_id**: Workspace identifier
         - **files**: List of files to upload
+        - **username**: Username (default: "admin")
         """
         try:
             wm = get_workspace_manager()
-            workspace = wm.get_workspace(workspace_id)
+            workspace = wm.get_workspace(workspace_id, username=username)
             if not workspace:
-                raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found")
+                raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found for user {username}")
             
-            upload_dir = wm.get_workspace_path(workspace_id, "input")
+            upload_dir = wm.get_workspace_path(workspace_id, "input", username=username)
             upload_dir.mkdir(parents=True, exist_ok=True)
             
             uploaded_files = []
@@ -654,11 +778,37 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
                 file_path = upload_dir / file.filename
                 with open(file_path, "wb") as buffer:
                     shutil.copyfileobj(file.file, buffer)
+                
+                file_size = file_path.stat().st_size
+                file_type = file_path.suffix.lower()
+                mime_type = file.content_type if hasattr(file, 'content_type') else None
+                
                 uploaded_files.append({
                     "name": file.filename,
                     "path": str(file_path),
-                    "size": file_path.stat().st_size
+                    "size": file_size
                 })
+                
+                # Save file metadata to PostgreSQL if database storage is available
+                if wm.db_store and wm.db_store._connection:
+                    user_id = wm._get_user_id(username)
+                    if user_id:
+                        workspace_db = wm.db_store.get_workspace(user_id, workspace_id)
+                        if workspace_db:
+                            workspace_db_id = workspace_db.get("id")
+                            if workspace_db_id:
+                                file_id = wm.db_store.record_file(
+                                    workspace_db_id=workspace_db_id,
+                                    filename=file.filename,
+                                    file_path=str(file_path),
+                                    subdir="input",
+                                    file_size=file_size,
+                                    file_type=file_type,
+                                    mime_type=mime_type
+                                )
+                                if file_id:
+                                    logger.info(f"Recorded file {file.filename} in database (ID: {file_id})")
+                
                 logger.info(f"Uploaded file to workspace {workspace_id}: {file.filename}")
             
             return Response(

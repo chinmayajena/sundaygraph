@@ -25,6 +25,7 @@ ontology:
   build_with_llm: true  # Build schema using LLM reasoning
   store_in_postgres: true  # Store schema metadata in PostgreSQL
   evolve_automatically: true  # Evolve schema based on data
+  enable_evaluation: true  # Enable quality evaluation metrics
 
 graph:
   backend: "memory"  # Lightweight graph for data hydration (LightRAG-inspired)
@@ -92,10 +93,12 @@ processing:
     
   llm:
     provider: "openai"  # Using OpenAI for all reasoning
-    model: "gpt-4"
+    model: "gpt-4"  # Will auto-select cheaper models for simple tasks
     temperature: 0.7
     max_tokens: 2000
     api_key: "${OPENAI_API_KEY}"  # From environment variable
+    enable_cache: true  # Enable response caching to reduce costs
+    cache_ttl: 3600  # Cache time-to-live in seconds (1 hour)
 
 storage:
   persist_graph: true

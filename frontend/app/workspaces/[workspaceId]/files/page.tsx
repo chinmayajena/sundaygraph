@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -26,6 +26,7 @@ export default function FilesPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [previewData, setPreviewData] = useState<any>(null)
   const [loadingPreview, setLoadingPreview] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
 
   useEffect(() => {
@@ -55,7 +56,15 @@ export default function FilesPage() {
     setLoadingPreview(true)
     try {
       const result = await apiClient.getFilePreview(workspaceId, filename, 'input')
-      setPreviewData(result.data)
+      // Ensure file_path is included for PDF files and add workspaceId
+      const previewData = result.data
+      if (previewData) {
+        if (!previewData.file_path && previewData.path) {
+          previewData.file_path = previewData.path
+        }
+        previewData.workspaceId = workspaceId
+      }
+      setPreviewData(previewData)
     } catch (error: any) {
       toast({
         title: "Error loading preview",
@@ -65,6 +74,10 @@ export default function FilesPage() {
     } finally {
       setLoadingPreview(false)
     }
+  }
+
+  const handleUploadClick = () => {
+    fileInputRef.current?.click()
   }
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -79,6 +92,10 @@ export default function FilesPage() {
         description: `Uploaded ${fileArray.length} file(s) successfully`,
       })
       loadFiles()
+      // Reset input so same file can be uploaded again
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
     } catch (error: any) {
       toast({
         title: "Error uploading files",
@@ -106,21 +123,22 @@ export default function FilesPage() {
       </div>
 
       <div className="mb-4">
-        <label>
-          <Button asChild variant="outline">
-            <span>
-              <Upload className="h-4 w-4 mr-2" />
-              Upload Files
-            </span>
-          </Button>
-          <input
-            type="file"
-            multiple
-            onChange={handleFileUpload}
-            className="hidden"
-            accept=".json,.csv,.txt,.xml,.pdf,.docx"
-          />
-        </label>
+        <Button 
+          variant="outline" 
+          onClick={handleUploadClick}
+          type="button"
+        >
+          <Upload className="h-4 w-4 mr-2" />
+          Upload Files
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          onChange={handleFileUpload}
+          className="hidden"
+          accept=".json,.csv,.txt,.xml,.pdf,.docx"
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

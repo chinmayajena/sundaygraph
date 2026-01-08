@@ -240,7 +240,7 @@ class WorkspaceManager:
     
     def list_files(self, workspace_id: str, subdir: str = "input", username: str = "admin") -> List[Dict[str, Any]]:
         """
-        List files in workspace directory
+        List files in workspace directory (database-backed if available)
         
         Args:
             workspace_id: Workspace identifier
@@ -250,6 +250,36 @@ class WorkspaceManager:
         Returns:
             List of file information
         """
+        # Try to get files from PostgreSQL first
+        if self.db_store and self.db_store._connection:
+            user_id = self._get_user_id(username)
+            if user_id:
+                workspace_db = self.db_store.get_workspace(user_id, workspace_id)
+                if workspace_db:
+                    workspace_db_id = workspace_db.get("id")
+                    if workspace_db_id:
+                        db_files = self.db_store.list_files(workspace_db_id, subdir)
+                        if db_files:
+                            # Convert database records to file info format
+                            files = []
+                            for db_file in db_files:
+                                file_path = Path(db_file.get("file_path", ""))
+                                if file_path.exists():  # Verify file still exists on disk
+                                    files.append({
+                                        "name": db_file.get("filename", ""),
+                                        "path": str(file_path),
+                                        "size": db_file.get("file_size", 0),
+                                        "modified": db_file.get("created_at", "").isoformat() if db_file.get("created_at") else "",
+                                        "extension": file_path.suffix.lower(),
+                                        "type": self._get_file_type(file_path.suffix)
+                                    })
+                            
+                            # Sort by modified time (newest first)
+                            files.sort(key=lambda x: x["modified"], reverse=True)
+                            logger.debug(f"Retrieved {len(files)} files from database for workspace {workspace_id}")
+                            return files
+        
+        # Fallback to filesystem-based listing
         workspace_path = self.get_workspace_path(workspace_id, subdir, username=username)
         
         if not workspace_path.exists():
@@ -270,6 +300,7 @@ class WorkspaceManager:
         
         # Sort by modified time (newest first)
         files.sort(key=lambda x: x["modified"], reverse=True)
+        logger.debug(f"Retrieved {len(files)} files from filesystem for workspace {workspace_id}")
         return files
     
     def get_file_preview(self, workspace_id: str, filename: str, subdir: str = "input", max_lines: int = 50, username: str = "admin") -> Dict[str, Any]:
@@ -309,14 +340,20 @@ class WorkspaceManager:
                     data = json.load(f)
                     file_info["preview"] = json.dumps(data, indent=2)[:5000]  # First 5000 chars
                     file_info["preview_type"] = "json"
-            elif file_path.suffix.lower() in ['.txt', '.csv', '.xml']:
+            elif file_path.suffix.lower() == '.csv':
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    lines = f.readlines()[:max_lines]
+                    file_info["preview"] = ''.join(lines)
+                    file_info["preview_type"] = "csv"
+            elif file_path.suffix.lower() in ['.txt', '.xml']:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     lines = f.readlines()[:max_lines]
                     file_info["preview"] = ''.join(lines)
                     file_info["preview_type"] = "text"
             elif file_path.suffix.lower() == '.pdf':
-                file_info["preview"] = "[PDF file - preview not available]"
-                file_info["preview_type"] = "binary"
+                file_info["preview"] = "[PDF file - use PDF viewer]"
+                file_info["preview_type"] = "pdf"
+                file_info["file_path"] = str(file_path)  # Include file path for PDF viewer
             else:
                 # Try to read as text
                 try:
