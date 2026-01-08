@@ -6,14 +6,18 @@ A production-grade Agentic AI system that transforms structured and unstructured
 
 - **LLM-Powered Schema Building**: Automatically builds ontology schema from domain descriptions using OpenAI reasoning (OntoCast-inspired)
 - **PostgreSQL Schema Storage**: Stores ontology schema metadata in PostgreSQL for versioning and evolution tracking
-- **Lightweight Graph DB**: Uses in-memory/NetworkX graph for fast data hydration (LightRAG-inspired)
+- **Lightweight Graph DB**: Uses in-memory/NetworkX or Oxigraph SPARQL database for ontology-backed graphs
 - **Dynamic Schema Evolution**: Automatically evolves schema based on new data patterns
 - **Multi-Format Data Ingestion**: Handles structured (JSON, CSV, XML) and unstructured (text, documents) data
+- **Workspace-Based Multi-Tenancy**: Isolated data and graphs per workspace with user-specific access
+- **File Management**: Upload, preview, and manage files within workspaces (CSV, JSON, PDF, text)
+- **LLM Cost Optimization**: Response caching, smart model selection, and token tracking
+- **Ontology Evaluation**: Quality metrics for schema completeness, consistency, and coherence
 - **LLM-Powered Reasoning**: Uses OpenAI for intelligent entity extraction, relation discovery, and ontology mapping
 - **Agentic Architecture**: Modular agents for specialized tasks
 - **RESTful API**: FastAPI-based API for easy integration
 - **Modern Web UI**: Next.js frontend with Tailwind CSS and shadcn/ui
-- **Docker Support**: Complete Docker Compose setup with Frontend, API, PostgreSQL and Neo4j
+- **Docker Support**: Complete Docker Compose setup with Frontend, API, PostgreSQL and Oxigraph
 - **Production-Ready**: Configurable, maintainable, and scalable design
 
 ## Technical Architecture
@@ -78,9 +82,9 @@ A production-grade Agentic AI system that transforms structured and unstructured
             │                               │
             ▼                               ▼
     ┌───────────────┐              ┌───────────────┐
-    │  Memory       │              │  Neo4j         │
-    │  Graph Store  │              │  Graph Store    │
-    │  (NetworkX)   │              │  (Production)   │
+    │  Memory       │              │  Oxigraph      │
+    │  Graph Store  │              │  Graph Store   │
+    │  (NetworkX)   │              │  (SPARQL/RDF)   │
     └───────────────┘              └───────────────┘
 ```
 
@@ -104,7 +108,7 @@ SundayGraph Instance (src/core/sundaygraph.py)
     │   ├─ LLMService (if OpenAI API key set)
     │   ├─ SchemaStore (PostgreSQL, if enabled)
     │   ├─ OntologyManager (load schema from YAML/PostgreSQL)
-    │   ├─ GraphStore (Memory/Neo4j based on config)
+    │   ├─ GraphStore (Memory/Oxigraph based on config)
     │   └─ Agents (DataIngestion, Ontology, GraphConstruction, Query)
     └─ Execute Requested Operation
 ```
@@ -273,7 +277,7 @@ SundayGraph (Orchestrator)
     ├─ LLMService (OpenAI API client)
     ├─ SchemaStore (PostgreSQL connection)
     ├─ OntologyManager (Schema validation)
-    ├─ GraphStore (Memory/Neo4j abstraction)
+    ├─ GraphStore (Memory/Oxigraph abstraction)
     │
     └─ Agents:
         ├─ DataIngestionAgent
@@ -328,17 +332,18 @@ The system uses LLM reasoning at three key points:
    ├─ Metadata
    └─ Used by: SchemaStore, OntologyManager
 
-2. Graph Storage (Memory or Neo4j)
+2. Graph Storage (Memory or Oxigraph)
    ├─ Memory (NetworkX):
    │   ├─ Fast for development/testing
    │   ├─ In-memory only
    │   └─ No persistence (unless pickled)
    │
-   └─ Neo4j (Production):
-       ├─ Persistent graph database
-       ├─ Scalable
-       ├─ ACID transactions
-       └─ Cypher query support
+   └─ Oxigraph (Production):
+       ├─ Lightweight SPARQL/RDF database
+       ├─ Native ontology support
+       ├─ Persistent graph storage
+       ├─ Workspace namespace isolation
+       └─ SPARQL query support
 
 3. File System
    ├─ Input data: data/input/
@@ -377,7 +382,7 @@ The system uses **thinking LLMs** for:
 **Prerequisites:** Docker Desktop must be running
 
 ```bash
-# Start all services (Frontend + API + PostgreSQL + Neo4j)
+# Start all services (Frontend + API + PostgreSQL + Oxigraph)
 docker-compose up -d
 
 # Check logs
@@ -393,7 +398,7 @@ Services will be available at:
 - **API**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
 - **PostgreSQL**: localhost:5432 (schema metadata)
-- **Neo4j Browser**: http://localhost:7474 (optional, for large graphs)
+- **Oxigraph SPARQL**: http://localhost:7878/query (graph database)
 
 ### Local Development (No Docker)
 
@@ -410,9 +415,7 @@ python run_local.py
 # Or: python -m uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**Note:** Local runs use memory backend by default (no Neo4j needed).
-
-See [SETUP.md](SETUP.md) for detailed setup instructions.
+**Note:** Local runs use memory backend by default. Set `graph.backend: "oxigraph"` in config.yaml to use Oxigraph.
 
 ### Configuration
 
@@ -426,25 +429,46 @@ See [SETUP.md](SETUP.md) for detailed setup instructions.
    ```
    
    The application will automatically load environment variables from `.env` file.
-   See `.env.example` for template.
 
-2. **Configure in `config/config.yaml`**:
+2. **Configure Graph Backend in `config/config.yaml`**:
+   
+   For production with persistent graph storage:
+   ```yaml
+   graph:
+     backend: "oxigraph"  # Use Oxigraph for SPARQL/RDF graph storage
+     oxigraph:
+       sparql_endpoint: "http://oxigraph:7878/query"
+       update_endpoint: "http://oxigraph:7878/update"
+       default_graph_uri: "http://sundaygraph.org/graph"
+   ```
+   
+   For development/testing (in-memory):
+   ```yaml
+   graph:
+     backend: "memory"  # Fast in-memory graph (no persistence)
+   ```
+
+3. **Configure LLM and PostgreSQL in `config/config.yaml`**:
 ```yaml
 processing:
   llm:
-    provider: "openai"  # Using OpenAI for all reasoning
-    model: "gpt-4"
+    provider: "openai"
+    model: "gpt-4o-mini"  # Cost-optimized model for simple tasks
     temperature: 0.7
     max_tokens: 2000
+    enable_cache: true  # Enable LLM response caching
+    cache_ttl: 3600  # Cache TTL in seconds
 
 ontology:
   build_with_llm: true  # Build schema using LLM reasoning
   store_in_postgres: true  # Store schema in PostgreSQL
   evolve_automatically: true  # Evolve schema based on data
+  enable_evaluation: true  # Enable ontology quality evaluation
 
 schema_store:
   enabled: true
-  host: "postgres"  # "localhost" for local dev
+  host: "postgres"  # "localhost" for local dev, "postgres" for Docker
+  port: 5432
   database: "sundaygraph"
   user: "postgres"
   password: "password"
@@ -542,7 +566,8 @@ sundaygraph/
 │   │   └── loaders.py            # File format loaders (JSON, CSV, etc.)
 │   │
 │   ├── graph/                     # Graph storage abstraction
-│   │   └── graph_store.py        # GraphStore interface & implementations
+│   │   ├── graph_store.py        # GraphStore interface & MemoryGraphStore
+│   │   └── oxigraph_store.py     # OxigraphGraphStore (SPARQL/RDF)
 │   │
 │   ├── ontology/                  # Ontology management
 │   │   ├── ontology_manager.py   # Schema loading & validation
@@ -561,8 +586,17 @@ sundaygraph/
 │   └── ontology_schema.yaml       # Default ontology schema
 │
 ├── frontend/                      # Next.js frontend
-│   ├── app/                       # Next.js app directory
+│   ├── app/                       # Next.js app directory (pages)
+│   │   ├── page.tsx              # Dashboard
+│   │   ├── workspaces/           # Workspace pages
+│   │   ├── graph/                # Graph visualization
+│   │   ├── ontology/             # Ontology view
+│   │   ├── files/                # Files view
+│   │   └── agents/               # Agents view
 │   ├── components/                # React components
+│   │   ├── sidebar.tsx           # Navigation sidebar
+│   │   ├── file-preview.tsx      # File preview (CSV, JSON, PDF)
+│   │   └── ui/                   # shadcn/ui components
 │   └── lib/                       # API client
 │
 ├── tests/                         # Test suite
@@ -570,11 +604,16 @@ sundaygraph/
 │   ├── test_graph_store.py
 │   └── test_ontology.py
 │
-├── data/                          # Data directories
+├── data/                          # Data directories (persisted in Docker)
 │   ├── input/                     # Input data files
 │   ├── output/                    # Output files
 │   ├── cache/                     # Cache directory
-│   └── seed/                      # Seed data for testing
+│   ├── seed/                      # Seed data for testing
+│   └── workspaces/                # Workspace-specific data
+│
+├── config/                        # Configuration files
+│   ├── config.yaml                # Main configuration
+│   └── ontology_schema.yaml      # Default ontology schema
 │
 ├── docs/                          # Documentation
 │   ├── ARCHITECTURE.md            # Architecture details
@@ -587,7 +626,6 @@ sundaygraph/
 ├── pyproject.toml                 # Python dependencies
 ├── run_local.py                   # Local development server script
 ├── ingest_seed_data.py            # Seed data ingestion script
-├── SETUP.md                       # Setup instructions
 └── README.md                      # This file
 ```
 
@@ -604,7 +642,9 @@ sundaygraph/
 
 **Important Files (Key Features):**
 - `src/utils/llm_service.py` - LLM integration (required for schema building)
+- `src/utils/llm_cost_optimizer.py` - LLM cost optimization (caching, token tracking)
 - `src/storage/schema_store.py` - PostgreSQL schema storage (optional)
+- `src/ontology/evaluation_metrics.py` - Ontology quality evaluation
 - `src/data/*.py` - Data processing (required for ingestion)
 
 **Supporting Files:**
@@ -616,7 +656,6 @@ sundaygraph/
 **Documentation:**
 - `README.md` - Main documentation (this file)
 - `docs/*.md` - Detailed documentation
-- `SETUP.md` - Setup instructions
 
 **Files to Ignore (Generated/Runtime):**
 - `__pycache__/` - Python bytecode (should be in .gitignore)
@@ -645,6 +684,34 @@ uv run ruff check src/ tests/
 ## License
 
 MIT License
+
+## Key Features
+
+### Workspace-Based Multi-Tenancy
+- Each workspace has isolated data and graph namespace
+- User-specific access control (default: "admin")
+- Workspace-scoped file management and graph queries
+
+### File Management
+- Upload files (CSV, JSON, PDF, TXT, XML, DOCX) to workspaces
+- Preview files with type-specific viewers (CSV tables, JSON editor, PDF viewer)
+- Ingest files to build knowledge graph
+- Build ontology schema from uploaded files
+
+### Graph Visualization
+- View workspace-specific graph nodes (entities) and edges (relations)
+- Filter by entity type or relation type
+- Graph statistics and storage information
+
+### LLM Cost Optimization
+- Response caching to reduce API calls
+- Smart model selection (gpt-4o-mini for simple tasks)
+- Token tracking and cost statistics
+
+### Ontology Evaluation
+- Quality metrics: completeness, consistency, coherence, coverage, structure
+- Automatic evaluation during schema building
+- API endpoint for manual evaluation
 
 ## Documentation
 

@@ -13,7 +13,8 @@ class GraphStore(ABC):
         self, 
         entity_type: str, 
         entity_id: str, 
-        properties: Dict[str, Any]
+        properties: Dict[str, Any],
+        workspace_id: Optional[str] = None
     ) -> bool:
         """Add or update an entity"""
         pass
@@ -24,7 +25,8 @@ class GraphStore(ABC):
         relation_type: str,
         source_id: str,
         target_id: str,
-        properties: Optional[Dict[str, Any]] = None
+        properties: Optional[Dict[str, Any]] = None,
+        workspace_id: Optional[str] = None
     ) -> bool:
         """Add or update a relation"""
         pass
@@ -39,7 +41,8 @@ class GraphStore(ABC):
         self,
         entity_type: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
-        limit: int = 100
+        limit: int = 100,
+        workspace_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Query entities"""
         pass
@@ -50,7 +53,8 @@ class GraphStore(ABC):
         relation_type: Optional[str] = None,
         source_id: Optional[str] = None,
         target_id: Optional[str] = None,
-        limit: int = 100
+        limit: int = 100,
+        workspace_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Query relations"""
         pass
@@ -60,7 +64,8 @@ class GraphStore(ABC):
         self,
         entity_id: str,
         relation_types: Optional[List[str]] = None,
-        direction: str = "both"
+        direction: str = "both",
+        workspace_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get neighboring entities"""
         pass
@@ -76,13 +81,13 @@ class GraphStore(ABC):
         pass
     
     @abstractmethod
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """Get graph statistics"""
         pass
 
 
 class MemoryGraphStore(GraphStore):
-    """In-memory graph store using NetworkX"""
+    """In-memory graph store using NetworkX with workspace namespace support"""
     
     def __init__(self, directed: bool = True, multigraph: bool = False):
         """
@@ -99,37 +104,59 @@ class MemoryGraphStore(GraphStore):
         
         self.directed = directed
         self.multigraph = multigraph
-        self.graph = nx.DiGraph() if directed else nx.Graph()
-        self.entity_properties: Dict[str, Dict[str, Any]] = {}
-        self.relation_properties: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
-        logger.info("Initialized memory graph store")
+        # Store graphs per workspace: {workspace_id: graph}
+        self.graphs: Dict[str, Any] = {}
+        # Store entity properties per workspace: {workspace_id: {entity_id: properties}}
+        self.entity_properties: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        # Store relation properties per workspace: {workspace_id: {(source, target, type): properties}}
+        self.relation_properties: Dict[str, Dict[Tuple[str, str, str], Dict[str, Any]]] = {}
+        logger.info("Initialized memory graph store with workspace namespace support")
+    
+    def _get_graph(self, workspace_id: Optional[str] = None) -> Any:
+        """Get or create graph for workspace"""
+        workspace_key = workspace_id or "default"
+        if workspace_key not in self.graphs:
+            import networkx as nx
+            self.graphs[workspace_key] = nx.DiGraph() if self.directed else nx.Graph()
+            self.entity_properties[workspace_key] = {}
+            self.relation_properties[workspace_key] = {}
+        return self.graphs[workspace_key]
+    
+    def _get_workspace_key(self, workspace_id: Optional[str] = None) -> str:
+        """Get workspace key for storage"""
+        return workspace_id or "default"
     
     def add_entity(
         self, 
         entity_type: str, 
         entity_id: str, 
-        properties: Dict[str, Any]
+        properties: Dict[str, Any],
+        workspace_id: Optional[str] = None
     ) -> bool:
         """Add or update an entity"""
         try:
+            workspace_key = self._get_workspace_key(workspace_id)
+            graph = self._get_graph(workspace_id)
+            
             # Store entity properties
             full_properties = {
                 "type": entity_type,
                 "id": entity_id,
+                "workspace_id": workspace_id,
                 **properties
             }
-            self.entity_properties[entity_id] = full_properties
+            self.entity_properties[workspace_key][entity_id] = full_properties
             
             # Add node to graph if not exists
-            if not self.graph.has_node(entity_id):
-                self.graph.add_node(entity_id)
+            if not graph.has_node(entity_id):
+                graph.add_node(entity_id)
             
             # Update node attributes
-            self.graph.nodes[entity_id].update(full_properties)
+            graph.nodes[entity_id].update(full_properties)
             
             return True
         except Exception as e:
-            logger.error(f"Error adding entity {entity_id}: {e}")
+            logger.error(f"Error adding entity {entity_id} to workspace {workspace_id}: {e}")
             return False
     
     def add_relation(
@@ -137,47 +164,60 @@ class MemoryGraphStore(GraphStore):
         relation_type: str,
         source_id: str,
         target_id: str,
-        properties: Optional[Dict[str, Any]] = None
+        properties: Optional[Dict[str, Any]] = None,
+        workspace_id: Optional[str] = None
     ) -> bool:
         """Add or update a relation"""
         try:
+            workspace_key = self._get_workspace_key(workspace_id)
+            graph = self._get_graph(workspace_id)
+            
             # Ensure nodes exist
-            if not self.graph.has_node(source_id):
-                self.graph.add_node(source_id)
-            if not self.graph.has_node(target_id):
-                self.graph.add_node(target_id)
+            if not graph.has_node(source_id):
+                graph.add_node(source_id)
+            if not graph.has_node(target_id):
+                graph.add_node(target_id)
             
             # Store relation properties
             properties = properties or {}
+            properties["workspace_id"] = workspace_id
             relation_key = (source_id, target_id, relation_type)
-            self.relation_properties[relation_key] = properties
+            self.relation_properties[workspace_key][relation_key] = properties
             
             # Add edge
-            edge_data = {"type": relation_type, **properties}
-            self.graph.add_edge(source_id, target_id, **edge_data)
+            edge_data = {"type": relation_type, "workspace_id": workspace_id, **properties}
+            graph.add_edge(source_id, target_id, **edge_data)
             
             return True
         except Exception as e:
-            logger.error(f"Error adding relation {relation_type} from {source_id} to {target_id}: {e}")
+            logger.error(f"Error adding relation {relation_type} from {source_id} to {target_id} in workspace {workspace_id}: {e}")
             return False
     
-    def get_entity(self, entity_id: str) -> Optional[Dict[str, Any]]:
+    def get_entity(self, entity_id: str, workspace_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get entity by ID"""
-        if entity_id not in self.entity_properties:
+        workspace_key = self._get_workspace_key(workspace_id)
+        if workspace_key not in self.entity_properties:
             return None
-        return self.entity_properties[entity_id].copy()
+        if entity_id not in self.entity_properties[workspace_key]:
+            return None
+        return self.entity_properties[workspace_key][entity_id].copy()
     
     def query_entities(
         self,
         entity_type: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
-        limit: int = 100
+        limit: int = 100,
+        workspace_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Query entities"""
+        workspace_key = self._get_workspace_key(workspace_id)
+        if workspace_key not in self.entity_properties:
+            return []
+        
         results = []
         filters = filters or {}
         
-        for entity_id, properties in self.entity_properties.items():
+        for entity_id, properties in self.entity_properties[workspace_key].items():
             # Filter by type
             if entity_type and properties.get("type") != entity_type:
                 continue
@@ -201,13 +241,18 @@ class MemoryGraphStore(GraphStore):
         relation_type: Optional[str] = None,
         source_id: Optional[str] = None,
         target_id: Optional[str] = None,
-        limit: int = 100
+        limit: int = 100,
+        workspace_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Query relations"""
+        workspace_key = self._get_workspace_key(workspace_id)
+        if workspace_key not in self.relation_properties:
+            return []
+        
         results = []
         count = 0
         
-        for (src, tgt, rel_type), props in self.relation_properties.items():
+        for (src, tgt, rel_type), props in self.relation_properties[workspace_key].items():
             # Apply filters
             if relation_type and rel_type != relation_type:
                 continue
@@ -233,31 +278,35 @@ class MemoryGraphStore(GraphStore):
         self,
         entity_id: str,
         relation_types: Optional[List[str]] = None,
-        direction: str = "both"
+        direction: str = "both",
+        workspace_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get neighboring entities"""
-        if not self.graph.has_node(entity_id):
+        workspace_key = self._get_workspace_key(workspace_id)
+        graph = self._get_graph(workspace_id)
+        
+        if not graph.has_node(entity_id):
             return []
         
         neighbors = []
         
         if direction in ["out", "both"]:
-            for target_id in self.graph.successors(entity_id):
-                for edge_data in self.graph[entity_id][target_id].values():
+            for target_id in graph.successors(entity_id):
+                for edge_data in graph[entity_id][target_id].values():
                     rel_type = edge_data.get("type", "")
                     if not relation_types or rel_type in relation_types:
-                        neighbor = self.get_entity(target_id)
+                        neighbor = self.get_entity(target_id, workspace_id)
                         if neighbor:
                             neighbor["relation"] = rel_type
                             neighbor["direction"] = "out"
                             neighbors.append(neighbor)
         
         if direction in ["in", "both"]:
-            for source_id in self.graph.predecessors(entity_id):
-                for edge_data in self.graph[source_id][entity_id].values():
+            for source_id in graph.predecessors(entity_id):
+                for edge_data in graph[source_id][entity_id].values():
                     rel_type = edge_data.get("type", "")
                     if not relation_types or rel_type in relation_types:
-                        neighbor = self.get_entity(source_id)
+                        neighbor = self.get_entity(source_id, workspace_id)
                         if neighbor:
                             neighbor["relation"] = rel_type
                             neighbor["direction"] = "in"
@@ -294,17 +343,25 @@ class MemoryGraphStore(GraphStore):
         self.relation_properties.clear()
         logger.info("Cleared graph store")
     
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """Get graph statistics"""
+        workspace_key = self._get_workspace_key(workspace_id)
+        graph = self._get_graph(workspace_id)
+        
+        entity_props = self.entity_properties.get(workspace_key, {})
+        relation_props = self.relation_properties.get(workspace_key, {})
+        
         return {
-            "nodes": self.graph.number_of_nodes(),
-            "edges": self.graph.number_of_edges(),
+            "nodes": graph.number_of_nodes(),
+            "edges": graph.number_of_edges(),
             "entity_types": len(set(
-                props.get("type") for props in self.entity_properties.values()
+                props.get("type") for props in entity_props.values()
             )),
             "relation_types": len(set(
-                key[2] for key in self.relation_properties.keys()
-            ))
+                key[2] for key in relation_props.keys()
+            )),
+            "workspace_id": workspace_id,
+            "backend": "memory"
         }
 
 
@@ -376,10 +433,13 @@ class Neo4jGraphStore(GraphStore):
         relation_type: str,
         source_id: str,
         target_id: str,
-        properties: Optional[Dict[str, Any]] = None
+        properties: Optional[Dict[str, Any]] = None,
+        workspace_id: Optional[str] = None
     ) -> bool:
         """Add or update a relation"""
         properties = properties or {}
+        if workspace_id:
+            properties["workspace_id"] = workspace_id
         props_str = ", ".join([f"`{k}`: ${k}" for k in properties.keys()]) if properties else ""
         props_set = f" SET r += {{{props_str}}}" if props_str else ""
         
@@ -392,10 +452,14 @@ class Neo4jGraphStore(GraphStore):
         params = {"source_id": source_id, "target_id": target_id, **properties}
         return self._execute_write(query, params)
     
-    def get_entity(self, entity_id: str) -> Optional[Dict[str, Any]]:
+    def get_entity(self, entity_id: str, workspace_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get entity by ID"""
-        query = "MATCH (n {id: $id}) RETURN n"
-        results = self._execute_read(query, {"id": entity_id})
+        if workspace_id:
+            query = "MATCH (n {id: $id, workspace_id: $workspace_id}) RETURN n"
+            results = self._execute_read(query, {"id": entity_id, "workspace_id": workspace_id})
+        else:
+            query = "MATCH (n {id: $id}) RETURN n"
+            results = self._execute_read(query, {"id": entity_id})
         if results:
             node = results[0]["n"]
             return dict(node)
@@ -405,12 +469,17 @@ class Neo4jGraphStore(GraphStore):
         self,
         entity_type: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
-        limit: int = 100
+        limit: int = 100,
+        workspace_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Query entities"""
         label = f":{entity_type}" if entity_type else ""
         filter_clauses = []
         params = {"limit": limit}
+        
+        if workspace_id:
+            filter_clauses.append("n.workspace_id = $workspace_id")
+            params["workspace_id"] = workspace_id
         
         if filters:
             for key, value in filters.items():
@@ -428,12 +497,14 @@ class Neo4jGraphStore(GraphStore):
         relation_type: Optional[str] = None,
         source_id: Optional[str] = None,
         target_id: Optional[str] = None,
-        limit: int = 100
+        limit: int = 100,
+        workspace_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Query relations"""
         rel_type = f":{relation_type}" if relation_type else ""
         match_clauses = []
         params = {"limit": limit}
+        where_clauses = []
         
         if source_id:
             match_clauses.append("(a {id: $source_id})")
@@ -447,8 +518,15 @@ class Neo4jGraphStore(GraphStore):
         else:
             match_clauses.append("(b)")
         
+        if workspace_id:
+            where_clauses.append("r.workspace_id = $workspace_id")
+            params["workspace_id"] = workspace_id
+        
+        where_clause = " WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+        
         query = f"""
         MATCH {match_clauses[0]}-[r{rel_type}]->{match_clauses[1]}
+        {where_clause}
         RETURN a, r, b
         LIMIT $limit
         """
@@ -456,9 +534,9 @@ class Neo4jGraphStore(GraphStore):
         results = self._execute_read(query, params)
         return [
             {
-                "source": dict(record["a"]),
-                "target": dict(record["b"]),
-                "type": list(record["r"].types())[0],
+                "source": dict(record["a"]).get("id", ""),
+                "target": dict(record["b"]).get("id", ""),
+                "type": list(record["r"].types())[0] if record["r"].types() else "",
                 **dict(record["r"])
             }
             for record in results
@@ -468,7 +546,8 @@ class Neo4jGraphStore(GraphStore):
         self,
         entity_id: str,
         relation_types: Optional[List[str]] = None,
-        direction: str = "both"
+        direction: str = "both",
+        workspace_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get neighboring entities"""
         rel_types = "|".join(relation_types) if relation_types else ""
@@ -512,19 +591,36 @@ class Neo4jGraphStore(GraphStore):
         self._execute_write(query, {})
         logger.info("Cleared Neo4j database")
     
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """Get graph statistics"""
-        query = """
-        MATCH (n)
-        WITH count(n) as node_count
-        MATCH ()-[r]->()
-        WITH node_count, count(r) as edge_count
-        RETURN node_count as nodes, edge_count as edges
-        """
-        results = self._execute_read(query, {})
+        if workspace_id:
+            query = """
+            MATCH (n {workspace_id: $workspace_id})
+            WITH count(n) as node_count
+            MATCH ()-[r]->()
+            WHERE r.workspace_id = $workspace_id
+            WITH node_count, count(r) as edge_count
+            RETURN node_count as nodes, edge_count as edges
+            """
+            results = self._execute_read(query, {"workspace_id": workspace_id})
+        else:
+            query = """
+            MATCH (n)
+            WITH count(n) as node_count
+            MATCH ()-[r]->()
+            WITH node_count, count(r) as edge_count
+            RETURN node_count as nodes, edge_count as edges
+            """
+            results = self._execute_read(query, {})
+        
         if results:
-            return dict(results[0])
-        return {"nodes": 0, "edges": 0}
+            return {
+                "nodes": results[0]["nodes"],
+                "edges": results[0]["edges"],
+                "workspace_id": workspace_id,
+                "backend": "neo4j"
+            }
+        return {"nodes": 0, "edges": 0, "workspace_id": workspace_id, "backend": "neo4j"}
     
     def close(self) -> None:
         """Close database connection"""

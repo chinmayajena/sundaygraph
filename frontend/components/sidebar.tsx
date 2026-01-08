@@ -253,6 +253,17 @@ export function Sidebar() {
                       >
                         Query
                       </Link>
+                      <Link
+                        href={`/workspaces/${workspace.id}/graph`}
+                        className={cn(
+                          "block px-2 py-1 rounded text-xs transition-colors",
+                          pathname === `/workspaces/${workspace.id}/graph`
+                            ? "bg-primary text-primary-foreground"
+                            : "text-muted-foreground hover:bg-accent"
+                        )}
+                      >
+                        Graph
+                      </Link>
                     </div>
                   )}
                 </div>

@@ -8,7 +8,7 @@ import sys
 from .config import Config
 from ..ontology.ontology_manager import OntologyManager
 from ..ontology.schema_builder import OntologySchemaBuilder
-from ..graph.graph_store import GraphStore, MemoryGraphStore, Neo4jGraphStore
+from ..graph.graph_store import GraphStore, MemoryGraphStore
 from ..storage.schema_store import SchemaStore
 from ..agents.data_ingestion_agent import DataIngestionAgent
 from ..agents.ontology_agent import OntologyAgent
@@ -103,7 +103,16 @@ class SundayGraph:
         self.ontology_manager = self._initialize_ontology()
         
         # Initialize lightweight graph store for data (like LightRAG)
-        self.graph_store = self._create_graph_store()
+        try:
+            self.graph_store = self._create_graph_store()
+        except Exception as e:
+            logger.warning(f"Failed to initialize graph store: {e}. Falling back to memory store.")
+            from ..graph.graph_store import MemoryGraphStore
+            memory_config = self.config.graph.memory
+            self.graph_store = MemoryGraphStore(
+                directed=memory_config.directed,
+                multigraph=memory_config.multigraph
+            )
         
         # Initialize agents
         self.data_ingestion_agent = DataIngestionAgent(
@@ -274,14 +283,24 @@ class SundayGraph:
         """Create graph store based on configuration"""
         backend = self.config.graph.backend
         
-        if backend == "neo4j":
-            neo4j_config = self.config.graph.neo4j
-            return Neo4jGraphStore(
-                uri=neo4j_config.uri,
-                user=neo4j_config.user,
-                password=neo4j_config.password,
-                database=neo4j_config.database
-            )
+        if backend == "oxigraph":
+            from ..graph.oxigraph_store import OxigraphGraphStore
+            oxigraph_config = self.config.graph.oxigraph
+            try:
+                return OxigraphGraphStore(
+                    sparql_endpoint=oxigraph_config.sparql_endpoint,
+                    update_endpoint=oxigraph_config.update_endpoint,
+                    default_graph_uri=oxigraph_config.default_graph_uri,
+                    timeout=oxigraph_config.timeout
+                )
+            except Exception as e:
+                logger.warning(f"Failed to connect to Oxigraph: {e}. Falling back to memory store.")
+                # Fallback to memory store if Oxigraph is not available
+                memory_config = self.config.graph.memory
+                return MemoryGraphStore(
+                    directed=memory_config.directed,
+                    multigraph=memory_config.multigraph
+                )
         else:  # memory
             memory_config = self.config.graph.memory
             return MemoryGraphStore(
@@ -289,23 +308,26 @@ class SundayGraph:
                 multigraph=memory_config.multigraph
             )
     
-    async def ingest_data(self, input_path: str | Path) -> Dict[str, Any]:
+    async def ingest_data(self, input_path: str | Path, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Ingest data from file or directory
         
         Args:
             input_path: Path to file or directory
+            workspace_id: Optional workspace ID for namespace isolation
             
         Returns:
             Statistics about ingestion
         """
-        logger.info(f"Ingesting data from: {input_path}")
+        logger.info(f"Ingesting data from: {input_path} to workspace: {workspace_id}")
         
         # Step 1: Data ingestion
         raw_data = await self.data_ingestion_agent.process(input_path)
         if not raw_data:
-            logger.warning("No data was ingested")
-            return {"status": "no_data", "entities": 0, "relations": 0}
+            logger.warning(f"No data was ingested from {input_path}")
+            return {"status": "no_data", "entities_added": 0, "relations_added": 0}
+        
+        logger.info(f"Loaded {len(raw_data)} raw data items from {input_path}")
         
         # Step 2: Extract entities and relations
         entities = []
@@ -322,6 +344,10 @@ class SundayGraph:
                 if is_valid or not self.config.ontology.strict_mode:
                     entity["properties"] = mapped_props
                     entities.append(entity)
+                else:
+                    logger.debug(f"Entity validation failed for {entity.get('id')}: {errors}")
+            else:
+                logger.debug(f"Could not extract entity from data item: {list(item.keys())[:5]}")
             
             # Extract relations from data
             item_relations = self._extract_relations_from_data(item)
@@ -335,15 +361,22 @@ class SundayGraph:
                 )
                 if is_valid or not self.config.ontology.strict_mode:
                     relations.append(rel)
+                else:
+                    logger.debug(f"Relation validation failed: {errors}")
         
-        # Step 3: Construct graph
-        stats = await self.graph_construction_agent.process(entities, relations)
+        logger.info(f"Extracted {len(entities)} entities and {len(relations)} relations from {len(raw_data)} items")
         
-        logger.info(f"Ingestion complete: {stats}")
+        # Step 3: Construct graph with workspace namespace
+        stats = await self.graph_construction_agent.process(entities, relations, workspace_id)
+        
+        logger.info(f"Ingestion complete for workspace {workspace_id}: {stats['entities_added']} entities, {stats['relations_added']} relations added")
         return {
             "status": "success",
             "raw_items": len(raw_data),
-            **stats
+            "entities_added": stats.get("entities_added", 0),
+            "relations_added": stats.get("relations_added", 0),
+            "entities_skipped": stats.get("entities_skipped", 0),
+            "relations_skipped": stats.get("relations_skipped", 0)
         }
     
     def _extract_entity_from_data(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -359,20 +392,31 @@ class SundayGraph:
         # Try to infer entity type
         entity_type = self.ontology_agent.suggest_entity_type(data) or "Entity"
         
-        # Extract properties
-        properties = {k: v for k, v in data.items() if k not in ["type", "id"]}
+        # Extract properties (exclude metadata fields)
+        properties = {k: v for k, v in data.items() if k not in ["type", "id", "source", "chunk_index", "total_chunks", "metadata"]}
         
         # Generate ID if not present
         entity_id = data.get("id")
         if not entity_id:
-            # Try to use a unique identifier
-            for key in ["name", "title", "email", "url"]:
-                if key in data:
+            # Try to use a unique identifier from common fields
+            for key in ["name", "title", "email", "url", "id", "customer_id", "product_id", "employee_id", "project_id"]:
+                if key in data and data[key]:
                     entity_id = f"{entity_type}:{data[key]}"
                     break
         
+        # If still no ID, generate one from properties or use row index
         if not entity_id:
-            return None
+            # For CSV/structured data, create ID from first property value
+            if properties:
+                first_key = list(properties.keys())[0]
+                first_value = str(properties[first_key])[:50]  # Limit length
+                entity_id = f"{entity_type}:{first_key}_{first_value}"
+            else:
+                # Last resort: use hash of all properties
+                import hashlib
+                prop_str = str(sorted(data.items()))
+                prop_hash = hashlib.md5(prop_str.encode()).hexdigest()[:8]
+                entity_id = f"{entity_type}:{prop_hash}"
         
         return {
             "type": entity_type,
@@ -407,15 +451,49 @@ class SundayGraph:
                                      if k not in ["type", "source_id", "source", "target_id", "target"]}
                     })
         
+        # For CSV/structured data, look for foreign key-like relationships
+        # Check for columns that might indicate relationships (e.g., "project_id", "manager_id", etc.)
+        entity_id = data.get("id")
+        if not entity_id:
+            # Try to generate entity ID same way as in _extract_entity_from_data
+            entity_type = self.ontology_agent.suggest_entity_type(data) or "Entity"
+            for key in ["name", "title", "email", "url", "id", "customer_id", "product_id", "employee_id", "project_id"]:
+                if key in data and data[key]:
+                    entity_id = f"{entity_type}:{data[key]}"
+                    break
+            # If still no ID, use first property
+            if not entity_id and data:
+                first_key = list(data.keys())[0]
+                if first_key not in ["type", "id", "source", "chunk_index", "total_chunks", "metadata"]:
+                    first_value = str(data[first_key])[:50]
+                    entity_id = f"{entity_type}:{first_key}_{first_value}"
+        
+        if entity_id:
+            # Look for foreign key columns (ending in _id or containing "id")
+            for key, value in data.items():
+                if key.endswith("_id") or (key != "id" and "id" in key.lower() and value and key not in ["chunk_index", "total_chunks"]):
+                    # Create a relation to the referenced entity
+                    target_type = key.replace("_id", "").replace("Id", "").title()
+                    if not target_type:
+                        target_type = "Entity"
+                    relations.append({
+                        "type": "HAS_" + key.upper().replace("_", ""),
+                        "source_id": entity_id,
+                        "target_id": f"{target_type}:{value}",
+                        "properties": {}
+                    })
+        
         # Check for document mentions (if content exists)
         if "content" in data and isinstance(data["content"], str):
             # Simple relation: document mentions entities
             # In production, use NLP to extract entities and create relations
             doc_id = data.get("id") or data.get("source", "unknown")
+            if not doc_id.startswith("Document:"):
+                doc_id = f"Document:{doc_id}"
             relations.append({
                 "type": "MENTIONS",
-                "source_id": f"Document:{doc_id}",
-                "target_id": "Entity:extracted",  # Placeholder
+                "source_id": doc_id,
+                "target_id": "Entity:extracted",  # Placeholder - could be enhanced with NLP
                 "properties": {"context": data["content"][:200]}
             })
         
@@ -434,9 +512,9 @@ class SundayGraph:
         """
         return await self.query_agent.process(query, query_type)
     
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """Get system statistics"""
-        graph_stats = await self.query_agent.get_graph_stats()
+        graph_stats = self.graph_store.get_stats(workspace_id=workspace_id)
         
         return {
             "graph": graph_stats,

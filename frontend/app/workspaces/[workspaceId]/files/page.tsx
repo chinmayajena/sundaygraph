@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { FileText, Upload, Eye, Download } from 'lucide-react'
+import { FileText, Upload, Eye, Download, Database, Sparkles } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import { useToast } from '@/components/ui/use-toast'
 import { FilePreview } from '@/components/file-preview'
@@ -26,6 +26,8 @@ export default function FilesPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [previewData, setPreviewData] = useState<any>(null)
   const [loadingPreview, setLoadingPreview] = useState(false)
+  const [ingesting, setIngesting] = useState(false)
+  const [selectedFilesForIngest, setSelectedFilesForIngest] = useState<string[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
 
@@ -105,6 +107,34 @@ export default function FilesPage() {
     }
   }
 
+  const handleIngestFiles = async (filenames: string[] = []) => {
+    try {
+      setIngesting(true)
+      const result = await apiClient.ingestWorkspaceFiles(workspaceId, filenames)
+      toast({
+        title: "Files ingested successfully",
+        description: `Processed ${result.data?.files_processed || 0} file(s). Added ${result.data?.total_entities || 0} entities and ${result.data?.total_relations || 0} relations to graph.`,
+      })
+      setSelectedFilesForIngest([])
+    } catch (error: any) {
+      toast({
+        title: "Error ingesting files",
+        description: error.response?.data?.detail || error.message,
+        variant: "destructive",
+      })
+    } finally {
+      setIngesting(false)
+    }
+  }
+
+  const toggleFileForIngest = (filename: string) => {
+    setSelectedFilesForIngest(prev => 
+      prev.includes(filename) 
+        ? prev.filter(f => f !== filename)
+        : [...prev, filename]
+    )
+  }
+
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
@@ -122,7 +152,7 @@ export default function FilesPage() {
         </p>
       </div>
 
-      <div className="mb-4">
+      <div className="mb-4 flex gap-2">
         <Button 
           variant="outline" 
           onClick={handleUploadClick}
@@ -130,6 +160,49 @@ export default function FilesPage() {
         >
           <Upload className="h-4 w-4 mr-2" />
           Upload Files
+        </Button>
+        <Button 
+          variant="default" 
+          onClick={() => {
+            // If no files selected, pass empty array to ingest all files
+            handleIngestFiles(selectedFilesForIngest.length > 0 ? selectedFilesForIngest : [])
+          }}
+          disabled={ingesting || files.length === 0}
+          type="button"
+        >
+          <Database className="h-4 w-4 mr-2" />
+          {ingesting ? 'Ingesting...' : selectedFilesForIngest.length > 0 
+            ? `Ingest Selected (${selectedFilesForIngest.length})` 
+            : 'Ingest All Files'}
+        </Button>
+        <Button 
+          variant="outline" 
+          onClick={async () => {
+            try {
+              setIngesting(true)
+              // If no files selected, pass empty array to use all files
+              const filesToUse = selectedFilesForIngest.length > 0 ? selectedFilesForIngest : []
+              const result = await apiClient.buildOntologyFromFiles(workspaceId, filesToUse)
+              toast({
+                title: "Ontology built successfully",
+                description: `Created schema with ${result.data?.entities || 0} entity types and ${result.data?.relations || 0} relation types`,
+              })
+              setSelectedFilesForIngest([])
+            } catch (error: any) {
+              toast({
+                title: "Error building ontology",
+                description: error.response?.data?.detail || error.message,
+                variant: "destructive",
+              })
+            } finally {
+              setIngesting(false)
+            }
+          }}
+          disabled={ingesting || files.length === 0}
+          type="button"
+        >
+          <Sparkles className="h-4 w-4 mr-2" />
+          Build Ontology from Files
         </Button>
         <input
           ref={fileInputRef}
@@ -159,39 +232,65 @@ export default function FilesPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {files.map((file) => (
-                  <div
-                    key={file.name}
-                    className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                      selectedFile === file.name
-                        ? 'bg-primary text-primary-foreground'
-                        : 'hover:bg-accent'
-                    }`}
-                    onClick={() => handleFileSelect(file.name)}
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <FileText className="h-4 w-4" />
-                          <span className="font-medium">{file.name}</span>
+                {files.map((file) => {
+                  const isSelected = selectedFile === file.name
+                  const isSelectedForIngest = selectedFilesForIngest.includes(file.name)
+                  return (
+                    <div
+                      key={file.name}
+                      className={`p-3 border rounded-lg transition-colors ${
+                        isSelected
+                          ? 'bg-primary text-primary-foreground'
+                          : isSelectedForIngest
+                          ? 'bg-accent border-primary'
+                          : 'hover:bg-accent'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div 
+                          className="flex-1 cursor-pointer"
+                          onClick={() => handleFileSelect(file.name)}
+                        >
+                          <div className="flex items-center gap-2">
+                            <FileText className="h-4 w-4" />
+                            <span className="font-medium">{file.name}</span>
+                            {isSelectedForIngest && (
+                              <span className="text-xs bg-primary text-primary-foreground px-2 py-0.5 rounded">
+                                Selected
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs mt-1 opacity-80">
+                            {formatFileSize(file.size)} • {new Date(file.modified).toLocaleDateString()}
+                          </div>
                         </div>
-                        <div className="text-xs mt-1 opacity-80">
-                          {formatFileSize(file.size)} • {new Date(file.modified).toLocaleDateString()}
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleFileSelect(file.name)
+                            }}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant={isSelectedForIngest ? "default" : "ghost"}
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              toggleFileForIngest(file.name)
+                            }}
+                            title={isSelectedForIngest ? "Deselect for ingestion" : "Select for ingestion"}
+                          >
+                            <Database className="h-4 w-4" />
+                          </Button>
                         </div>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleFileSelect(file.name)
-                        }}
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </CardContent>

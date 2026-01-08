@@ -58,6 +58,14 @@ class WorkspaceFileRequest(BaseModel):
     subdir: Optional[str] = "input"
 
 
+class IngestWorkspaceFilesRequest(BaseModel):
+    filenames: List[str] = []
+
+
+class BuildOntologyFromFilesRequest(BaseModel):
+    filenames: List[str] = []
+
+
 # Global instances
 _sundaygraph: Optional[SundayGraph] = None
 _workspace_manager: Optional[WorkspaceManager] = None
@@ -232,6 +240,146 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             logger.error(f"Ingestion failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
+    @app.post("/api/v1/workspaces/{workspace_id}/ingest", response_model=Response, tags=["Data"])
+    async def ingest_workspace_files(
+        workspace_id: str,
+        request: IngestWorkspaceFilesRequest,
+        username: str = "admin"
+    ):
+        """
+        Ingest files from workspace into knowledge graph
+        
+        - **workspace_id**: Workspace identifier
+        - **filenames**: List of filenames to ingest (empty = all files)
+        - **username**: Username (default: "admin")
+        """
+        try:
+            wm = get_workspace_manager()
+            workspace = wm.get_workspace(workspace_id, username=username)
+            if not workspace:
+                raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found")
+            
+            input_dir = wm.get_workspace_path(workspace_id, "input", username=username)
+            
+            # Get files to ingest
+            if not request.filenames:
+                # Ingest all files in input directory
+                files_to_ingest = [f for f in input_dir.iterdir() if f.is_file()]
+            else:
+                files_to_ingest = [input_dir / f for f in request.filenames if (input_dir / f).exists()]
+            
+            if not files_to_ingest:
+                raise HTTPException(status_code=400, detail="No files found to ingest")
+            
+            sg = get_sundaygraph()
+            results = []
+            total_entities = 0
+            total_relations = 0
+            
+            for file_path in files_to_ingest:
+                try:
+                    result = await sg.ingest_data(str(file_path), workspace_id=workspace_id)
+                    results.append({
+                        "file": file_path.name,
+                        "status": result.get("status", "success"),
+                        "entities": result.get("entities_added", 0),
+                        "relations": result.get("relations_added", 0)
+                    })
+                    total_entities += result.get("entities_added", 0)
+                    total_relations += result.get("relations_added", 0)
+                except Exception as e:
+                    logger.error(f"Failed to ingest {file_path.name}: {e}")
+                    results.append({
+                        "file": file_path.name,
+                        "status": "error",
+                        "error": str(e)
+                    })
+            
+            return Response(
+                success=True,
+                message=f"Ingested {len(files_to_ingest)} file(s): {total_entities} entities, {total_relations} relations",
+                data={
+                    "files_processed": len(files_to_ingest),
+                    "total_entities": total_entities,
+                    "total_relations": total_relations,
+                    "results": results
+                }
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Workspace ingestion failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.post("/api/v1/workspaces/{workspace_id}/build-ontology", response_model=Response, tags=["Ontology"])
+    async def build_ontology_from_files(
+        workspace_id: str,
+        request: BuildOntologyFromFilesRequest,
+        username: str = "admin"
+    ):
+        """
+        Build ontology schema from files in workspace
+        
+        - **workspace_id**: Workspace identifier
+        - **filenames**: List of filenames to use (empty = all files)
+        - **username**: Username (default: "admin")
+        """
+        try:
+            wm = get_workspace_manager()
+            workspace = wm.get_workspace(workspace_id, username=username)
+            if not workspace:
+                raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found")
+            
+            input_dir = wm.get_workspace_path(workspace_id, "input", username=username)
+            
+            # Get files to use for ontology building
+            if not request.filenames:
+                # Use all files in input directory
+                files_to_use = [f for f in input_dir.iterdir() if f.is_file()]
+            else:
+                files_to_use = [input_dir / f for f in request.filenames if (input_dir / f).exists()]
+            
+            if not files_to_use:
+                raise HTTPException(status_code=400, detail="No files found to build ontology from")
+            
+            sg = get_sundaygraph()
+            
+            # Read file contents and combine for domain description
+            file_contents = []
+            for file_path in files_to_use:
+                try:
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                        # Limit content size for LLM prompt
+                        file_contents.append(f"File: {file_path.name}\n{content[:2000]}")
+                except Exception as e:
+                    logger.warning(f"Could not read {file_path.name}: {e}")
+            
+            if not file_contents:
+                raise HTTPException(status_code=400, detail="Could not read any file contents")
+            
+            # Create domain description from file contents
+            domain_description = f"Build an ontology schema based on the following data files:\n\n" + "\n\n---\n\n".join(file_contents)
+            
+            # Build schema using LLM
+            schema_result = await sg.build_schema_from_domain(domain_description)
+            
+            return Response(
+                success=True,
+                message=f"Ontology built from {len(files_to_use)} file(s)",
+                data={
+                    "entities": schema_result.get("entities", 0),  # Already a count, not a list
+                    "relations": schema_result.get("relations", 0),  # Already a count, not a list
+                    "version": schema_result.get("version", 1),
+                    "status": schema_result.get("status", "success")
+                }
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Ontology building from files failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
     @app.post("/api/v1/ingest/text", response_model=Response, tags=["Data"])
     async def ingest_text(request: Dict[str, Any]):
         """
@@ -357,11 +505,11 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/v1/stats", response_model=Response, tags=["Stats"])
-    async def get_stats():
+    async def get_stats(workspace_id: Optional[str] = None):
         """Get system statistics"""
         try:
             sg = get_sundaygraph()
-            stats = await sg.get_stats()
+            stats = await sg.get_stats(workspace_id=workspace_id)
             return Response(
                 success=True,
                 message="Statistics retrieved",
@@ -474,6 +622,52 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             )
         except Exception as e:
             logger.error(f"Clear failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/api/v1/graph/nodes", response_model=Response, tags=["Graph"])
+    async def get_graph_nodes(
+        workspace_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: int = 100
+    ):
+        """Get graph nodes (entities) for a workspace"""
+        try:
+            sg = get_sundaygraph()
+            entities = sg.graph_store.query_entities(
+                entity_type=entity_type,
+                limit=limit,
+                workspace_id=workspace_id
+            )
+            return Response(
+                success=True,
+                message=f"Retrieved {len(entities)} entities",
+                data=entities
+            )
+        except Exception as e:
+            logger.error(f"Failed to get graph nodes: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/api/v1/graph/edges", response_model=Response, tags=["Graph"])
+    async def get_graph_edges(
+        workspace_id: Optional[str] = None,
+        relation_type: Optional[str] = None,
+        limit: int = 100
+    ):
+        """Get graph edges (relations) for a workspace"""
+        try:
+            sg = get_sundaygraph()
+            relations = sg.graph_store.query_relations(
+                relation_type=relation_type,
+                limit=limit,
+                workspace_id=workspace_id
+            )
+            return Response(
+                success=True,
+                message=f"Retrieved {len(relations)} relations",
+                data=relations
+            )
+        except Exception as e:
+            logger.error(f"Failed to get graph edges: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/v1/ontology/entities", tags=["Ontology"])

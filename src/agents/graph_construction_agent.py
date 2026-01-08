@@ -26,13 +26,14 @@ class GraphConstructionAgent(BaseAgent):
         self.merge_relations = self.config.get("merge_relations", True)
         self._entity_cache: Dict[str, str] = {}  # property_hash -> entity_id
     
-    async def process(self, entities: List[Dict[str, Any]], relations: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def process(self, entities: List[Dict[str, Any]], relations: List[Dict[str, Any]], workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Add entities and relations to graph
         
         Args:
             entities: List of entities to add
             relations: List of relations to add
+            workspace_id: Optional workspace ID for namespace isolation
             
         Returns:
             Statistics about the operation
@@ -45,7 +46,7 @@ class GraphConstructionAgent(BaseAgent):
         
         # Process entities
         for entity in entities:
-            entity_id = await self._add_entity(entity)
+            entity_id = await self._add_entity(entity, workspace_id)
             if entity_id:
                 stats["entities_added"] += 1
             else:
@@ -53,27 +54,28 @@ class GraphConstructionAgent(BaseAgent):
         
         # Process relations
         for relation in relations:
-            success = await self._add_relation(relation)
+            success = await self._add_relation(relation, workspace_id)
             if success:
                 stats["relations_added"] += 1
             else:
                 stats["relations_skipped"] += 1
         
-        logger.info(f"{self.name} added {stats['entities_added']} entities and {stats['relations_added']} relations")
+        logger.info(f"{self.name} added {stats['entities_added']} entities and {stats['relations_added']} relations to workspace {workspace_id}")
         return stats
     
-    async def _add_entity(self, entity: Dict[str, Any]) -> Optional[str]:
+    async def _add_entity(self, entity: Dict[str, Any], workspace_id: Optional[str] = None) -> Optional[str]:
         """
         Add entity to graph
         
         Args:
             entity: Entity data
+            workspace_id: Optional workspace ID for namespace isolation
             
         Returns:
             Entity ID if successful, None otherwise
         """
         entity_type = entity.get("type", "Entity")
-        properties = {k: v for k, v in entity.items() if k != "type"}
+        properties = {k: v for k, v in entity.items() if k not in ["type", "id"]}
         
         # Generate entity ID
         entity_id = entity.get("id")
@@ -83,24 +85,26 @@ class GraphConstructionAgent(BaseAgent):
         # Check for duplicates
         if self.deduplicate:
             prop_hash = self._hash_properties(properties)
-            if prop_hash in self._entity_cache:
-                existing_id = self._entity_cache[prop_hash]
+            cache_key = f"{workspace_id or 'default'}:{prop_hash}"
+            if cache_key in self._entity_cache:
+                existing_id = self._entity_cache[cache_key]
                 logger.debug(f"Duplicate entity found, using existing: {existing_id}")
                 return existing_id
-            self._entity_cache[prop_hash] = entity_id
+            self._entity_cache[cache_key] = entity_id
         
-        # Add to graph
-        success = self.graph_store.add_entity(entity_type, entity_id, properties)
+        # Add to graph with workspace namespace
+        success = self.graph_store.add_entity(entity_type, entity_id, properties, workspace_id=workspace_id)
         if success:
             return entity_id
         return None
     
-    async def _add_relation(self, relation: Dict[str, Any]) -> bool:
+    async def _add_relation(self, relation: Dict[str, Any], workspace_id: Optional[str] = None) -> bool:
         """
         Add relation to graph
         
         Args:
             relation: Relation data
+            workspace_id: Optional workspace ID for namespace isolation
             
         Returns:
             True if successful
@@ -122,13 +126,14 @@ class GraphConstructionAgent(BaseAgent):
                 relation_type=relation_type,
                 source_id=source_id,
                 target_id=target_id,
-                limit=1
+                limit=1,
+                workspace_id=workspace_id
             )
             if existing:
                 logger.debug(f"Relation already exists, skipping: {relation_type} from {source_id} to {target_id}")
                 return True
         
-        return self.graph_store.add_relation(relation_type, source_id, target_id, properties)
+        return self.graph_store.add_relation(relation_type, source_id, target_id, properties, workspace_id)
     
     def _generate_entity_id(self, entity_type: str, properties: Dict[str, Any]) -> str:
         """

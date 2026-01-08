@@ -45,7 +45,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      neo4j:
+      oxigraph:
         condition: service_healthy
     networks:
       - sundaygraph-network
@@ -78,43 +78,27 @@ services:
       retries: 5
       start_period: 10s
 
-  neo4j:
-    image: neo4j:5.15-community
-    container_name: sundaygraph-neo4j
+  oxigraph:
+    image: ghcr.io/oxigraph/oxigraph:latest
+    container_name: sundaygraph-oxigraph
     ports:
-      - "7474:7474"  # HTTP
-      - "7687:7687"  # Bolt
-    environment:
-      - NEO4J_AUTH=neo4j/password
-      - NEO4J_PLUGINS=["apoc"]
-      - NEO4J_dbms_memory_heap_initial__size=512m
-      - NEO4J_dbms_memory_heap_max__size=2G
-      - NEO4J_dbms_memory_pagecache_size=1G
+      - "7878:7878"  # SPARQL endpoint
     volumes:
-      - neo4j-data:/data
-      - neo4j-logs:/logs
-      - neo4j-import:/var/lib/neo4j/import
-      - neo4j-plugins:/plugins
+      - oxigraph-data:/data
     networks:
       - sundaygraph-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:7878/query?query=SELECT%20*%20WHERE%20%7B%3Fs%20%3Fp%20%3Fo%7D%20LIMIT%201"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 10s
 
 volumes:
   postgres-data:
     driver: local
-  neo4j-data:
-    driver: local
-  neo4j-logs:
-    driver: local
-  neo4j-import:
-    driver: local
-  neo4j-plugins:
+  oxigraph-data:
     driver: local
 
 networks:

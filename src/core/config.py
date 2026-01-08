@@ -35,14 +35,12 @@ class OntologyConfig(BaseModel):
     evolve_automatically: bool = True  # Evolve schema based on data
 
 
-class Neo4jConfig(BaseModel):
-    """Neo4j database configuration"""
-    uri: str = "bolt://localhost:7687"
-    user: str = "neo4j"
-    password: str = "password"
-    database: str = "neo4j"
-    max_connection_lifetime: int = 3600
-    max_connection_pool_size: int = 50
+class OxigraphConfig(BaseModel):
+    """Oxigraph SPARQL database configuration"""
+    sparql_endpoint: str = "http://oxigraph:7878/query"
+    update_endpoint: str = "http://oxigraph:7878/update"
+    default_graph_uri: str = "http://sundaygraph.org/graph"
+    timeout: int = 30
 
 
 class MemoryGraphConfig(BaseModel):
@@ -53,9 +51,9 @@ class MemoryGraphConfig(BaseModel):
 
 class GraphConfig(BaseModel):
     """Graph storage configuration"""
-    backend: str = "memory"  # "memory" or "neo4j"
+    backend: str = "memory"  # "memory" or "oxigraph"
     memory: MemoryGraphConfig = Field(default_factory=MemoryGraphConfig)
-    neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
+    oxigraph: OxigraphConfig = Field(default_factory=OxigraphConfig)
 
 
 class AgentConfig(BaseModel):
@@ -165,12 +163,26 @@ class Config(BaseSettings):
     @classmethod
     def from_yaml(cls, config_path: str | Path) -> "Config":
         """Load configuration from YAML file"""
+        import os
         config_path = Path(config_path)
         if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
         
         with open(config_path, "r", encoding="utf-8") as f:
             config_dict = yaml.safe_load(f)
+        
+        # Auto-detect Docker environment and adjust Oxigraph endpoints
+        # If running in Docker, use service names; if local, use localhost
+        is_docker = os.path.exists("/.dockerenv") or os.getenv("DOCKER_ENV") == "true"
+        
+        if "graph" in config_dict and "oxigraph" in config_dict.get("graph", {}):
+            oxigraph_config = config_dict["graph"]["oxigraph"]
+            if not is_docker:
+                # Running locally - use localhost for exposed ports
+                if "oxigraph" in oxigraph_config.get("sparql_endpoint", ""):
+                    oxigraph_config["sparql_endpoint"] = oxigraph_config["sparql_endpoint"].replace("oxigraph", "localhost")
+                if "oxigraph" in oxigraph_config.get("update_endpoint", ""):
+                    oxigraph_config["update_endpoint"] = oxigraph_config["update_endpoint"].replace("oxigraph", "localhost")
         
         return cls(**config_dict)
     

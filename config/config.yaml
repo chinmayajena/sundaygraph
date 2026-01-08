@@ -28,23 +28,21 @@ ontology:
   enable_evaluation: true  # Enable quality evaluation metrics
 
 graph:
-  backend: "memory"  # Lightweight graph for data hydration (LightRAG-inspired)
+  backend: "oxigraph"  # "memory" or "oxigraph" - Using Oxigraph in Docker
   memory:
     directed: true
     multigraph: false
-  neo4j:
-    uri: "bolt://neo4j:7687"  # Use service name in Docker
-    user: "neo4j"
-    password: "password"
-    database: "neo4j"
-    max_connection_lifetime: 3600
-    max_connection_pool_size: 50
+  oxigraph:
+    sparql_endpoint: "http://oxigraph:7878/query"  # Docker service name
+    update_endpoint: "http://oxigraph:7878/update"  # Docker service name
+    default_graph_uri: "http://sundaygraph.org/graph"  # Default graph URI
+    timeout: 30  # Request timeout in seconds
 
 # PostgreSQL for schema metadata storage (OntoCast-inspired)
 schema_store:
   enabled: true
   # Use service name in Docker, localhost for local
-  host: "localhost"  # Change to "postgres" for Docker
+  host: "postgres"  # Docker service name
   port: 5432
   database: "sundaygraph"
   user: "postgres"
