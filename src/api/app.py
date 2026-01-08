@@ -1,15 +1,19 @@
 """FastAPI application"""
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import asyncio
+import os
+import shutil
 from loguru import logger
 
 from ..core.sundaygraph import SundayGraph
 from ..core.config import Config
+from ..core.workspace_manager import WorkspaceManager
 import os
 
 
@@ -42,8 +46,21 @@ class Response(BaseModel):
     data: Optional[Any] = None
 
 
-# Global SundayGraph instance
+class WorkspaceRequest(BaseModel):
+    workspace_id: str
+    name: str
+    description: Optional[str] = None
+    username: str = "admin"  # Default user
+
+
+class WorkspaceFileRequest(BaseModel):
+    workspace_id: str
+    subdir: Optional[str] = "input"
+
+
+# Global instances
 _sundaygraph: Optional[SundayGraph] = None
+_workspace_manager: Optional[WorkspaceManager] = None
 
 
 def get_sundaygraph() -> SundayGraph:
@@ -60,6 +77,41 @@ def get_sundaygraph() -> SundayGraph:
     return _sundaygraph
 
 
+def get_workspace_manager() -> WorkspaceManager:
+    """Get or create WorkspaceManager instance with PostgreSQL support"""
+    global _workspace_manager
+    if _workspace_manager is None:
+        try:
+            sg = get_sundaygraph()
+            # Get base data directory from config
+            if hasattr(sg.config, 'data') and hasattr(sg.config.data, 'input_dir'):
+                input_dir = Path(sg.config.data.input_dir)
+                base_dir = input_dir.parent if input_dir else Path("./data")
+            else:
+                base_dir = Path("./data")
+            
+            # Get PostgreSQL connection string from schema_store config
+            connection_string = None
+            if hasattr(sg.config, 'schema_store') and getattr(sg.config.schema_store, 'enabled', False):
+                host = getattr(sg.config.schema_store, 'host', 'localhost')
+                port = getattr(sg.config.schema_store, 'port', 5432)
+                database = getattr(sg.config.schema_store, 'database', 'sundaygraph')
+                user = getattr(sg.config.schema_store, 'user', 'postgres')
+                password = getattr(sg.config.schema_store, 'password', 'password')
+                connection_string = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+            
+            _workspace_manager = WorkspaceManager(
+                base_data_dir=str(base_dir),
+                connection_string=connection_string
+            )
+            logger.info(f"WorkspaceManager initialized with base_dir: {base_dir}, PostgreSQL: {connection_string is not None}")
+        except Exception as e:
+            logger.error(f"Failed to initialize WorkspaceManager: {e}")
+            # Fallback to default
+            _workspace_manager = WorkspaceManager(base_data_dir="./data")
+    return _workspace_manager
+
+
 def create_app(config_path: Optional[str] = None) -> FastAPI:
     """Create and configure FastAPI application"""
     app = FastAPI(
@@ -71,7 +123,11 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
     # CORS middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Configure appropriately for production
+        allow_origins=[
+            "http://localhost:3000",
+            "http://frontend:3000",
+            "http://localhost:8000",
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -124,6 +180,35 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             logger.error(f"Health check failed: {e}")
             raise HTTPException(status_code=503, detail=f"Service unhealthy: {str(e)}")
     
+    @app.post("/api/v1/upload", tags=["Data"])
+    async def upload_files(files: List[UploadFile] = File(...)):
+        """
+        Upload files for ingestion
+        
+        - **files**: List of files to upload
+        """
+        try:
+            sg = get_sundaygraph()
+            upload_dir = Path(sg.config.data.input_dir)
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            
+            uploaded_paths = []
+            for file in files:
+                file_path = upload_dir / file.filename
+                with open(file_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+                uploaded_paths.append(str(file_path))
+                logger.info(f"Uploaded file: {file.filename}")
+            
+            return Response(
+                success=True,
+                message=f"Uploaded {len(uploaded_paths)} file(s)",
+                data={"paths": uploaded_paths}
+            )
+        except Exception as e:
+            logger.error(f"File upload failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
     @app.post("/api/v1/ingest", response_model=Response, tags=["Data"])
     async def ingest_data(request: IngestRequest, background_tasks: BackgroundTasks):
         """
@@ -145,6 +230,44 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             )
         except Exception as e:
             logger.error(f"Ingestion failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.post("/api/v1/ingest/text", response_model=Response, tags=["Data"])
+    async def ingest_text(request: Dict[str, Any]):
+        """
+        Ingest text data directly
+        
+        - **text**: Text content to ingest
+        - **filename**: Optional filename for the text
+        """
+        try:
+            sg = get_sundaygraph()
+            text = request.get("text", "")
+            filename = request.get("filename", "text_input.txt")
+            
+            if not text:
+                raise HTTPException(status_code=400, detail="Text content is required")
+            
+            # Save text to temporary file
+            input_dir = Path(sg.config.data.input_dir)
+            input_dir.mkdir(parents=True, exist_ok=True)
+            temp_file = input_dir / filename
+            
+            with open(temp_file, "w", encoding="utf-8") as f:
+                f.write(text)
+            
+            result = await sg.ingest_data(str(temp_file))
+            
+            # Optionally clean up temp file
+            # temp_file.unlink()
+            
+            return Response(
+                success=True,
+                message="Text data ingested",
+                data=result
+            )
+        except Exception as e:
+            logger.error(f"Text ingestion failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.post("/api/v1/query", response_model=Response, tags=["Query"])
@@ -315,6 +438,238 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             )
         except Exception as e:
             logger.error(f"Failed to get relation types: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.post("/api/v1/ontology/build", response_model=Response, tags=["Ontology"])
+    async def build_schema(request: Dict[str, Any]):
+        """
+        Build ontology schema from domain description using LLM reasoning
+        
+        - **domain_description**: Description of the domain
+        """
+        try:
+            sg = get_sundaygraph()
+            domain_description = request.get("domain_description", "")
+            if not domain_description:
+                raise HTTPException(status_code=400, detail="domain_description is required")
+            
+            result = await sg.build_schema_from_domain(domain_description)
+            return Response(
+                success=True,
+                message="Schema built successfully",
+                data=result
+            )
+        except Exception as e:
+            logger.error(f"Schema building failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.post("/api/v1/ontology/evolve", response_model=Response, tags=["Ontology"])
+    async def evolve_schema(request: Dict[str, Any]):
+        """
+        Evolve schema based on new data
+        
+        - **data_sample**: Sample of new data
+        - **feedback**: Optional feedback
+        """
+        try:
+            sg = get_sundaygraph()
+            data_sample = request.get("data_sample", {})
+            feedback = request.get("feedback")
+            
+            result = await sg.evolve_schema(data_sample, feedback)
+            return Response(
+                success=True,
+                message="Schema evolved successfully",
+                data=result
+            )
+        except Exception as e:
+            logger.error(f"Schema evolution failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    # Workspace endpoints
+    @app.post("/api/v1/workspaces", response_model=Response, tags=["Workspaces"])
+    async def create_workspace(request: WorkspaceRequest):
+        """
+        Create a new workspace
+        
+        - **workspace_id**: Unique workspace identifier
+        - **name**: Workspace name
+        - **description**: Optional description
+        - **username**: Username (default: "admin")
+        """
+        try:
+            wm = get_workspace_manager()
+            workspace = wm.create_workspace(
+                workspace_id=request.workspace_id,
+                name=request.name,
+                description=request.description,
+                username=request.username
+            )
+            return Response(
+                success=True,
+                message="Workspace created successfully",
+                data=workspace
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            logger.error(f"Workspace creation failed: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/api/v1/workspaces", response_model=Response, tags=["Workspaces"])
+    async def list_workspaces(username: str = "admin"):
+        """
+        List all workspaces for a user
+        
+        - **username**: Username (default: "admin")
+        """
+        try:
+            wm = get_workspace_manager()
+            workspaces = wm.list_workspaces(username=username)
+            return Response(
+                success=True,
+                message=f"Found {len(workspaces)} workspace(s) for user {username}",
+                data=workspaces
+            )
+        except Exception as e:
+            logger.error(f"Failed to list workspaces: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/api/v1/workspaces/{workspace_id}", response_model=Response, tags=["Workspaces"])
+    async def get_workspace(workspace_id: str, username: str = "admin"):
+        """
+        Get workspace information
+        
+        - **workspace_id**: Workspace identifier
+        - **username**: Username (default: "admin")
+        """
+        try:
+            wm = get_workspace_manager()
+            workspace = wm.get_workspace(workspace_id, username=username)
+            if not workspace:
+                raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found for user {username}")
+            return Response(
+                success=True,
+                message="Workspace retrieved",
+                data=workspace
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to get workspace: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.delete("/api/v1/workspaces/{workspace_id}", response_model=Response, tags=["Workspaces"])
+    async def delete_workspace(workspace_id: str, username: str = "admin"):
+        """
+        Delete a workspace
+        
+        - **workspace_id**: Workspace identifier
+        - **username**: Username (default: "admin")
+        """
+        try:
+            wm = get_workspace_manager()
+            success = wm.delete_workspace(workspace_id, username=username)
+            if not success:
+                raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found")
+            return Response(
+                success=True,
+                message="Workspace deleted successfully"
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to delete workspace: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    # File management endpoints
+    @app.get("/api/v1/workspaces/{workspace_id}/files", response_model=Response, tags=["Files"])
+    async def list_workspace_files(workspace_id: str, subdir: str = "input", username: str = "admin"):
+        """
+        List files in workspace directory
+        
+        - **workspace_id**: Workspace identifier
+        - **subdir**: Subdirectory (input, output, cache, graphs)
+        - **username**: Username (default: "admin")
+        """
+        try:
+            wm = get_workspace_manager()
+            files = wm.list_files(workspace_id, subdir, username=username)
+            return Response(
+                success=True,
+                message=f"Found {len(files)} file(s)",
+                data=files
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            logger.error(f"Failed to list files: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/api/v1/workspaces/{workspace_id}/files/{filename}/preview", response_model=Response, tags=["Files"])
+    async def get_file_preview(workspace_id: str, filename: str, subdir: str = "input", max_lines: int = 50):
+        """
+        Get file preview
+        
+        - **workspace_id**: Workspace identifier
+        - **filename**: File name
+        - **subdir**: Subdirectory (input, output, cache, graphs)
+        - **max_lines**: Maximum lines to preview
+        """
+        try:
+            wm = get_workspace_manager()
+            preview = wm.get_file_preview(workspace_id, filename, subdir, max_lines)
+            return Response(
+                success=True,
+                message="File preview retrieved",
+                data=preview
+            )
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            logger.error(f"Failed to get file preview: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.post("/api/v1/workspaces/{workspace_id}/upload", tags=["Files"])
+    async def upload_workspace_files(workspace_id: str, files: List[UploadFile] = File(...)):
+        """
+        Upload files to workspace
+        
+        - **workspace_id**: Workspace identifier
+        - **files**: List of files to upload
+        """
+        try:
+            wm = get_workspace_manager()
+            workspace = wm.get_workspace(workspace_id)
+            if not workspace:
+                raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found")
+            
+            upload_dir = wm.get_workspace_path(workspace_id, "input")
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            
+            uploaded_files = []
+            for file in files:
+                file_path = upload_dir / file.filename
+                with open(file_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+                uploaded_files.append({
+                    "name": file.filename,
+                    "path": str(file_path),
+                    "size": file_path.stat().st_size
+                })
+                logger.info(f"Uploaded file to workspace {workspace_id}: {file.filename}")
+            
+            return Response(
+                success=True,
+                message=f"Uploaded {len(uploaded_files)} file(s)",
+                data={"files": uploaded_files}
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"File upload failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
     return app

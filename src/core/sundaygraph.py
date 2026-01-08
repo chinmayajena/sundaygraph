@@ -7,7 +7,9 @@ import sys
 
 from .config import Config
 from ..ontology.ontology_manager import OntologyManager
+from ..ontology.schema_builder import OntologySchemaBuilder
 from ..graph.graph_store import GraphStore, MemoryGraphStore, Neo4jGraphStore
+from ..storage.schema_store import SchemaStore
 from ..agents.data_ingestion_agent import DataIngestionAgent
 from ..agents.ontology_agent import OntologyAgent
 from ..agents.graph_construction_agent import GraphConstructionAgent
@@ -37,27 +39,56 @@ class SundayGraph:
         # Setup logging
         self._setup_logging()
         
-        # Initialize components
-        self.ontology_manager = OntologyManager(
-            schema_path=self.config.ontology.schema_path,
-            strict_mode=self.config.ontology.strict_mode
-        )
-        
-        self.graph_store = self._create_graph_store()
-        
-        # Initialize LLM service if configured
+        # Initialize LLM service (required for schema building)
         llm_service = None
         if self.config.processing.llm.provider:
             try:
                 from ..utils.llm_service import LLMService
+                import os
+                api_key = os.getenv("OPENAI_API_KEY") if self.config.processing.llm.provider == "openai" else None
                 llm_service = LLMService(
                     provider=self.config.processing.llm.provider,
                     model=self.config.processing.llm.model,
                     temperature=self.config.processing.llm.temperature,
                     max_tokens=self.config.processing.llm.max_tokens
                 )
+                self.llm_service = llm_service
             except Exception as e:
                 logger.warning(f"Failed to initialize LLM service: {e}")
+                self.llm_service = None
+        else:
+            self.llm_service = None
+        
+        # Initialize schema store (PostgreSQL) if enabled
+        self.schema_store = None
+        if hasattr(self.config, 'schema_store') and getattr(self.config.schema_store, 'enabled', False):
+            try:
+                connection_string = getattr(self.config.schema_store, 'connection_string', None)
+                if not connection_string:
+                    # Build from individual parameters
+                    host = getattr(self.config.schema_store, 'host', 'localhost')
+                    port = getattr(self.config.schema_store, 'port', 5432)
+                    database = getattr(self.config.schema_store, 'database', 'sundaygraph')
+                    user = getattr(self.config.schema_store, 'user', 'postgres')
+                    password = getattr(self.config.schema_store, 'password', 'password')
+                    connection_string = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+                
+                self.schema_store = SchemaStore(connection_string)
+                logger.info("Schema store (PostgreSQL) initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize schema store: {e}")
+        
+        # Initialize schema builder (LLM-powered)
+        self.schema_builder = None
+        if self.llm_service and self.config.ontology.build_with_llm:
+            self.schema_builder = OntologySchemaBuilder(self.llm_service)
+            logger.info("Schema builder (LLM-powered) initialized")
+        
+        # Load or build ontology schema
+        self.ontology_manager = self._initialize_ontology()
+        
+        # Initialize lightweight graph store for data (like LightRAG)
+        self.graph_store = self._create_graph_store()
         
         # Initialize agents
         self.data_ingestion_agent = DataIngestionAgent(
@@ -85,6 +116,9 @@ class SundayGraph:
         )
         
         logger.info("SundayGraph system initialized")
+        logger.info(f"  - Schema: {'LLM-built' if self.schema_builder else 'YAML-based'}")
+        logger.info(f"  - Schema Store: {'PostgreSQL' if self.schema_store else 'File-based'}")
+        logger.info(f"  - Graph Store: {self.config.graph.backend}")
     
     def _setup_logging(self) -> None:
         """Setup logging configuration"""
@@ -108,6 +142,118 @@ class SundayGraph:
             retention="7 days",
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function} - {message}"
         )
+    
+    def _initialize_ontology(self) -> OntologyManager:
+        """Initialize ontology manager, loading from PostgreSQL or YAML"""
+        # Try to load from PostgreSQL first
+        if self.schema_store:
+            schema_data = self.schema_store.get_active_schema()
+            if schema_data:
+                logger.info(f"Loaded schema from PostgreSQL: {schema_data.get('version', 'unknown')}")
+                # Create temporary YAML file or load directly
+                # For now, use the schema_path as fallback
+                # TODO: Load schema directly from dict
+        
+        # Fallback to YAML file
+        return OntologyManager(
+            schema_path=self.config.ontology.schema_path,
+            strict_mode=self.config.ontology.strict_mode
+        )
+    
+    async def build_schema_from_domain(self, domain_description: str) -> Dict[str, Any]:
+        """
+        Build ontology schema from domain description using LLM reasoning
+        
+        Args:
+            domain_description: Description of the domain
+            
+        Returns:
+            Schema information
+        """
+        if not self.schema_builder:
+            raise ValueError("Schema builder not initialized. Enable LLM and build_with_llm in config.")
+        
+        logger.info("Building ontology schema from domain description")
+        
+        # Build schema using LLM
+        schema = await self.schema_builder.build_schema_from_domain(
+            domain_description,
+            existing_schema=self.ontology_manager.get_schema()
+        )
+        
+        # Save to PostgreSQL if enabled
+        if self.schema_store:
+            schema_dict = self.schema_builder._schema_to_dict(schema)
+            schema_id = self.schema_store.save_schema(
+                schema_dict,
+                version=schema.version,
+                name="Auto-generated Schema",
+                description=f"Built from domain: {domain_description[:100]}"
+            )
+            logger.info(f"Saved schema to PostgreSQL with ID: {schema_id}")
+        
+        # Update ontology manager
+        self.ontology_manager.schema = schema
+        
+        return {
+            "status": "success",
+            "entities": len(schema.entities),
+            "relations": len(schema.relations),
+            "version": schema.version
+        }
+    
+    async def evolve_schema(self, data_sample: Dict[str, Any], feedback: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Evolve schema based on new data
+        
+        Args:
+            data_sample: Sample of new data
+            feedback: Optional feedback
+            
+        Returns:
+            Evolution result
+        """
+        if not self.schema_builder:
+            raise ValueError("Schema builder not initialized")
+        
+        if not self.config.ontology.evolve_automatically:
+            logger.warning("Schema evolution is disabled in config")
+            return {"status": "disabled"}
+        
+        current_schema = self.ontology_manager.get_schema()
+        previous_schema_dict = self.schema_builder._schema_to_dict(current_schema)
+        
+        # Evolve schema
+        evolved_schema = await self.schema_builder.evolve_schema(
+            current_schema,
+            data_sample,
+            feedback
+        )
+        
+        # Record evolution in PostgreSQL
+        if self.schema_store:
+            new_schema_dict = self.schema_builder._schema_to_dict(evolved_schema)
+            schema_id = self.schema_store.save_schema(
+                new_schema_dict,
+                version=evolved_schema.version
+            )
+            
+            self.schema_store.record_evolution(
+                schema_id,
+                "auto_evolution",
+                feedback or "Automatic evolution based on new data",
+                previous_schema_dict,
+                new_schema_dict
+            )
+        
+        # Update ontology manager
+        self.ontology_manager.schema = evolved_schema
+        
+        return {
+            "status": "evolved",
+            "entities": len(evolved_schema.entities),
+            "relations": len(evolved_schema.relations)
+        }
     
     def _create_graph_store(self) -> GraphStore:
         """Create graph store based on configuration"""

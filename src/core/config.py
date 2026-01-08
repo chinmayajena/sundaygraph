@@ -30,6 +30,9 @@ class OntologyConfig(BaseModel):
     auto_validate: bool = True
     strict_mode: bool = False
     allow_custom_properties: bool = True
+    build_with_llm: bool = True  # Build schema using LLM reasoning
+    store_in_postgres: bool = True  # Store schema metadata in PostgreSQL
+    evolve_automatically: bool = True  # Evolve schema based on data
 
 
 class Neo4jConfig(BaseModel):
@@ -129,6 +132,17 @@ class ProcessingConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
 
 
+class SchemaStoreConfig(BaseModel):
+    """Schema store (PostgreSQL) configuration"""
+    enabled: bool = True
+    connection_string: Optional[str] = None
+    host: str = "localhost"
+    port: int = 5432
+    database: str = "sundaygraph"
+    user: str = "postgres"
+    password: str = "password"
+
+
 class StorageConfig(BaseModel):
     """Storage configuration"""
     persist_graph: bool = True
@@ -146,6 +160,7 @@ class Config(BaseSettings):
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    schema_store: Optional[SchemaStoreConfig] = Field(default_factory=SchemaStoreConfig)
 
     @classmethod
     def from_yaml(cls, config_path: str | Path) -> "Config":

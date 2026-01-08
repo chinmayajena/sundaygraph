@@ -31,7 +31,11 @@ class LLMService:
             if self.provider == "openai":
                 try:
                     import openai
-                    self._client = openai.OpenAI()
+                    import os
+                    api_key = os.getenv("OPENAI_API_KEY")
+                    if not api_key:
+                        logger.warning("OPENAI_API_KEY not set in environment")
+                    self._client = openai.OpenAI(api_key=api_key) if api_key else openai.OpenAI()
                     logger.info("Initialized OpenAI client")
                 except ImportError:
                     logger.warning("OpenAI not installed. Install with: pip install openai")

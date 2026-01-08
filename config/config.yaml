@@ -18,13 +18,16 @@ data:
   max_file_size_mb: 100
 
 ontology:
-  schema_path: "./config/ontology_schema.yaml"
+  schema_path: "./config/ontology_schema.yaml"  # Initial/fallback schema
   auto_validate: true
   strict_mode: false
   allow_custom_properties: true
+  build_with_llm: true  # Build schema using LLM reasoning
+  store_in_postgres: true  # Store schema metadata in PostgreSQL
+  evolve_automatically: true  # Evolve schema based on data
 
 graph:
-  backend: "neo4j"  # Options: "memory", "neo4j"
+  backend: "memory"  # Lightweight graph for data hydration (LightRAG-inspired)
   memory:
     directed: true
     multigraph: false
@@ -35,6 +38,16 @@ graph:
     database: "neo4j"
     max_connection_lifetime: 3600
     max_connection_pool_size: 50
+
+# PostgreSQL for schema metadata storage (OntoCast-inspired)
+schema_store:
+  enabled: true
+  # Use service name in Docker, localhost for local
+  host: "localhost"  # Change to "postgres" for Docker
+  port: 5432
+  database: "sundaygraph"
+  user: "postgres"
+  password: "password"
 
 agents:
   data_ingestion:
@@ -78,10 +91,11 @@ processing:
     device: "cpu"
     
   llm:
-    provider: "openai"  # Options: "openai", "anthropic", "local"
+    provider: "openai"  # Using OpenAI for all reasoning
     model: "gpt-4"
     temperature: 0.7
     max_tokens: 2000
+    api_key: "${OPENAI_API_KEY}"  # From environment variable
 
 storage:
   persist_graph: true
