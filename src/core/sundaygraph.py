@@ -14,6 +14,9 @@ from ..agents.data_ingestion_agent import DataIngestionAgent
 from ..agents.ontology_agent import OntologyAgent
 from ..agents.graph_construction_agent import GraphConstructionAgent
 from ..agents.query_agent import QueryAgent
+from ..agents.schema_inference_agent import SchemaInferenceAgent
+from ..data.extraction_executor import ExtractionExecutor
+from ..utils.code_executor import CodeExecutor
 
 
 class SundayGraph:
@@ -138,6 +141,15 @@ class SundayGraph:
             graph_store=self.graph_store,
             config=self.config.agents.query.model_dump()
         )
+        
+        # Initialize schema inference agent (for efficient extraction)
+        self.schema_inference_agent = None
+        if self.llm_service:
+            self.schema_inference_agent = SchemaInferenceAgent(
+                llm_service=self.llm_service,
+                config={"sample_size": 20, "max_sample_chars": 10000}
+            )
+            logger.info("Schema inference agent initialized (will use LLM once per file type)")
         
         logger.info("SundayGraph system initialized")
         logger.info(f"  - Schema: {'LLM-built' if self.schema_builder else 'YAML-based'}")
@@ -310,7 +322,8 @@ class SundayGraph:
     
     async def ingest_data(self, input_path: str | Path, workspace_id: Optional[str] = None) -> Dict[str, Any]:
         """
-        Ingest data from file or directory
+        Ingest data from file or directory using intelligent schema inference.
+        Uses LLM once to analyze data structure, then executes extraction rules on all rows.
         
         Args:
             input_path: Path to file or directory
@@ -329,44 +342,98 @@ class SundayGraph:
         
         logger.info(f"Loaded {len(raw_data)} raw data items from {input_path}")
         
-        # Step 2: Extract entities and relations
+        # Step 2: Intelligent extraction using schema inference
+        # Use LLM once to generate extraction rules, then execute on all rows
         entities = []
         relations = []
         
-        for item in raw_data:
-            # Extract entities from data
-            entity = self._extract_entity_from_data(item)
-            if entity:
-                # Validate with ontology agent
-                is_valid, errors, mapped_props = await self.ontology_agent.process(
-                    entity["type"], entity.get("properties", {})
-                )
-                if is_valid or not self.config.ontology.strict_mode:
-                    entity["properties"] = mapped_props
-                    entities.append(entity)
+        # Determine file type
+        file_path = Path(input_path)
+        file_type = file_path.suffix.lower().lstrip('.') if file_path.suffix else "unknown"
+        if not file_type or file_type == "unknown":
+            # Try to infer from data structure
+            if raw_data and isinstance(raw_data[0], dict):
+                if "content" in raw_data[0]:
+                    file_type = "text"
                 else:
-                    logger.debug(f"Entity validation failed for {entity.get('id')}: {errors}")
-            else:
-                logger.debug(f"Could not extract entity from data item: {list(item.keys())[:5]}")
+                    file_type = "structured"
+        
+        # Use schema inference if LLM is available
+        if self.schema_inference_agent and len(raw_data) > 0:
+            try:
+                # Get ontology schema for mapping
+                ontology_schema = None
+                if self.ontology_manager:
+                    ontology_schema = self.ontology_agent._get_ontology_schema_dict()
+                
+                # Take sample for analysis (first N rows)
+                sample_size = min(20, len(raw_data))
+                data_sample = raw_data[:sample_size]
+                
+                logger.info(f"Analyzing {sample_size} sample rows with LLM to generate extraction code (CodeAct)...")
+                
+                # Generate extraction code using LLM (CodeAct approach - ONE CALL)
+                extraction_code = await self.schema_inference_agent.generate_extraction_code(
+                    data_sample=data_sample,
+                    file_type=file_type,
+                    ontology_schema=ontology_schema
+                )
+                
+                # Also generate rules for fallback/configuration
+                extraction_rules = await self.schema_inference_agent.infer_extraction_rules(
+                    data_sample=data_sample,
+                    file_type=file_type,
+                    ontology_schema=ontology_schema
+                )
+                
+                logger.info(f"Generated extraction code ({len(extraction_code)} chars), processing all {len(raw_data)} rows without LLM calls...")
+                
+                # Execute generated code on all rows (NO LLM CALLS)
+                executor = ExtractionExecutor(rules=extraction_rules, code=extraction_code)
+                entities, relations = executor.extract_from_batch(raw_data)
+                
+                logger.info(f"Extracted {len(entities)} entities and {len(relations)} relations using generated rules")
+                
+            except Exception as e:
+                logger.warning(f"Schema inference failed: {e}. Falling back to rule-based extraction.")
+                # Fallback to original method
+                entities, relations = await self._extract_entities_relations_fallback(raw_data)
+        else:
+            # Fallback: use rule-based extraction without LLM
+            logger.info("Using rule-based extraction (no LLM available or schema inference disabled)")
+            entities, relations = await self._extract_entities_relations_fallback(raw_data)
+        
+        # Step 3: Optional validation (without LLM calls if strict_mode is off)
+        # Only validate if strict_mode is enabled
+        if self.config.ontology.strict_mode:
+            validated_entities = []
+            validated_relations = []
             
-            # Extract relations from data
-            item_relations = self._extract_relations_from_data(item)
-            for rel in item_relations:
-                # Validate relation
+            for entity in entities:
+                is_valid, errors, mapped_props = await self.ontology_agent.process(
+                    entity["type"], entity.get("properties", {}), use_llm=False
+                )
+                if is_valid:
+                    entity["properties"] = mapped_props
+                    validated_entities.append(entity)
+            
+            for rel in relations:
                 is_valid, errors = await self.ontology_agent.validate_relation(
                     rel["type"],
                     rel.get("source_type", "Entity"),
                     rel.get("target_type", "Entity"),
-                    rel.get("properties")
+                    rel.get("properties"),
+                    use_llm=False
                 )
-                if is_valid or not self.config.ontology.strict_mode:
-                    relations.append(rel)
-                else:
-                    logger.debug(f"Relation validation failed: {errors}")
+                if is_valid:
+                    validated_relations.append(rel)
+            
+            entities = validated_entities
+            relations = validated_relations
         
-        logger.info(f"Extracted {len(entities)} entities and {len(relations)} relations from {len(raw_data)} items")
+        logger.info(f"Final: {len(entities)} entities and {len(relations)} relations ready for graph construction")
         
-        # Step 3: Construct graph with workspace namespace
+        # Step 4: Construct graph with workspace namespace
         stats = await self.graph_construction_agent.process(entities, relations, workspace_id)
         
         logger.info(f"Ingestion complete for workspace {workspace_id}: {stats['entities_added']} entities, {stats['relations_added']} relations added")
@@ -378,6 +445,47 @@ class SundayGraph:
             "entities_skipped": stats.get("entities_skipped", 0),
             "relations_skipped": stats.get("relations_skipped", 0)
         }
+    
+    async def _extract_entities_relations_fallback(self, raw_data: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Fallback extraction method (original per-row approach, but without LLM calls)
+        
+        Args:
+            raw_data: List of raw data items
+            
+        Returns:
+            Tuple of (entities, relations) lists
+        """
+        entities = []
+        relations = []
+        
+        for item in raw_data:
+            # Extract entities from data (rule-based, no LLM)
+            entity = self._extract_entity_from_data(item)
+            if entity:
+                # Only validate against schema (no LLM)
+                is_valid, errors, mapped_props = await self.ontology_agent.process(
+                    entity["type"], entity.get("properties", {}), use_llm=False
+                )
+                if is_valid or not self.config.ontology.strict_mode:
+                    entity["properties"] = mapped_props
+                    entities.append(entity)
+            
+            # Extract relations from data (rule-based, no LLM)
+            item_relations = self._extract_relations_from_data(item)
+            for rel in item_relations:
+                # Only validate against schema (no LLM)
+                is_valid, errors = await self.ontology_agent.validate_relation(
+                    rel["type"],
+                    rel.get("source_type", "Entity"),
+                    rel.get("target_type", "Entity"),
+                    rel.get("properties"),
+                    use_llm=False
+                )
+                if is_valid or not self.config.ontology.strict_mode:
+                    relations.append(rel)
+        
+        return entities, relations
     
     def _extract_entity_from_data(self, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

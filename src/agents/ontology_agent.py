@@ -44,13 +44,14 @@ class OntologyAgent(BaseAgent):
                     max_tokens=llm_config.get("max_tokens", 2000)
                 )
     
-    async def process(self, entity_type: str, properties: Dict[str, Any]) -> tuple[bool, List[str], Dict[str, Any]]:
+    async def process(self, entity_type: str, properties: Dict[str, Any], use_llm: bool = True) -> tuple[bool, List[str], Dict[str, Any]]:
         """
-        Validate and map entity against ontology with LLM reasoning
+        Validate and map entity against ontology with optional LLM reasoning
         
         Args:
             entity_type: Type of entity
             properties: Entity properties
+            use_llm: Whether to use LLM reasoning (default: True)
             
         Returns:
             Tuple of (is_valid, errors, mapped_properties)
@@ -58,8 +59,8 @@ class OntologyAgent(BaseAgent):
         if not self.is_enabled():
             return True, [], properties
         
-        # Use LLM reasoning if enabled
-        if self.use_llm_reasoning and self.llm_service:
+        # Use LLM reasoning if enabled and requested
+        if use_llm and self.use_llm_reasoning and self.llm_service:
             try:
                 ontology_schema = self._get_ontology_schema_dict()
                 reasoning_result = await self.llm_service.reason_about_ontology(
@@ -100,7 +101,8 @@ class OntologyAgent(BaseAgent):
         relation_type: str,
         source_type: str,
         target_type: str,
-        properties: Optional[Dict[str, Any]] = None
+        properties: Optional[Dict[str, Any]] = None,
+        use_llm: bool = True
     ) -> tuple[bool, List[str]]:
         """
         Validate relation with optional LLM reasoning
@@ -110,6 +112,7 @@ class OntologyAgent(BaseAgent):
             source_type: Source entity type
             target_type: Target entity type
             properties: Relation properties
+            use_llm: Whether to use LLM reasoning (default: True)
             
         Returns:
             Tuple of (is_valid, errors)
@@ -117,8 +120,8 @@ class OntologyAgent(BaseAgent):
         if not self.is_enabled():
             return True, []
         
-        # Use LLM to validate semantic correctness if enabled
-        if self.use_llm_reasoning and self.llm_service:
+        # Use LLM to validate semantic correctness if enabled and requested
+        if use_llm and self.use_llm_reasoning and self.llm_service:
             try:
                 ontology_schema = self._get_ontology_schema_dict()
                 reasoning_result = await self.llm_service.reason_about_ontology(
