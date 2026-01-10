@@ -14,6 +14,8 @@ from loguru import logger
 from ..core.sundaygraph import SundayGraph
 from ..core.config import Config
 from ..core.workspace_manager import WorkspaceManager
+from ..tasks.factory import create_task_queue
+from ..tasks.base import TaskQueue, TaskStatus
 import os
 
 
@@ -69,6 +71,7 @@ class BuildOntologyFromFilesRequest(BaseModel):
 # Global instances
 _sundaygraph: Optional[SundayGraph] = None
 _workspace_manager: Optional[WorkspaceManager] = None
+_task_queue = None
 
 
 def get_sundaygraph() -> SundayGraph:
@@ -83,6 +86,15 @@ def get_sundaygraph() -> SundayGraph:
         else:
             _sundaygraph = SundayGraph()
     return _sundaygraph
+
+
+def get_task_queue() -> Optional[TaskQueue]:
+    """Get or create task queue instance"""
+    global _task_queue
+    if _task_queue is None:
+        sg = get_sundaygraph()
+        _task_queue = create_task_queue(sg.config.task_queue)
+    return _task_queue
 
 
 def get_workspace_manager() -> WorkspaceManager:
@@ -271,7 +283,32 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
             if not files_to_ingest:
                 raise HTTPException(status_code=400, detail="No files found to ingest")
             
+            task_queue = get_task_queue()
             sg = get_sundaygraph()
+            config_path = os.getenv("CONFIG_PATH", "config/config.yaml")
+            
+            # Use task queue if enabled
+            if task_queue:
+                task_ids = []
+                for file_path in files_to_ingest:
+                    task_id = await task_queue.enqueue(
+                        "ingest_data",
+                        config_path=config_path,
+                        input_path=str(file_path),
+                        workspace_id=workspace_id
+                    )
+                    task_ids.append({"file": file_path.name, "task_id": task_id})
+                
+                return Response(
+                    success=True,
+                    message=f"Queued {len(task_ids)} ingestion task(s)",
+                    data={
+                        "tasks": task_ids,
+                        "status_endpoint": "/api/v1/tasks/{task_id}"
+                    }
+                )
+            
+            # Synchronous processing (no task queue)
             results = []
             total_entities = 0
             total_relations = 0
@@ -1015,6 +1052,76 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
         except Exception as e:
             logger.error(f"File upload failed: {e}")
             raise HTTPException(status_code=500, detail=str(e))
+    
+    # Task queue endpoints
+    @app.get("/api/v1/tasks/{task_id}", tags=["Tasks"])
+    async def get_task_status(task_id: str):
+        """Get task status"""
+        task_queue = get_task_queue()
+        if not task_queue:
+            raise HTTPException(status_code=400, detail="Task queue is not enabled")
+        
+        result = await task_queue.get_status(task_id)
+        return {
+            "task_id": result.task_id,
+            "status": result.status.value,
+            "result": result.result,
+            "error": result.error,
+            "progress": result.progress,
+            "created_at": result.created_at.isoformat() if result.created_at else None,
+            "started_at": result.started_at.isoformat() if result.started_at else None,
+            "completed_at": result.completed_at.isoformat() if result.completed_at else None
+        }
+    
+    @app.get("/api/v1/tasks/{task_id}/result", tags=["Tasks"])
+    async def get_task_result(task_id: str, timeout: Optional[float] = None):
+        """Get task result (wait for completion)"""
+        task_queue = get_task_queue()
+        if not task_queue:
+            raise HTTPException(status_code=400, detail="Task queue is not enabled")
+        
+        result = await task_queue.get_result(task_id, timeout=timeout)
+        return {
+            "task_id": result.task_id,
+            "status": result.status.value,
+            "result": result.result,
+            "error": result.error,
+            "progress": result.progress,
+            "completed_at": result.completed_at.isoformat() if result.completed_at else None
+        }
+    
+    @app.post("/api/v1/tasks/{task_id}/cancel", tags=["Tasks"])
+    async def cancel_task(task_id: str):
+        """Cancel a running task"""
+        task_queue = get_task_queue()
+        if not task_queue:
+            raise HTTPException(status_code=400, detail="Task queue is not enabled")
+        
+        success = await task_queue.cancel(task_id)
+        return {"success": success, "task_id": task_id}
+    
+    @app.get("/api/v1/tasks", tags=["Tasks"])
+    async def list_tasks(status: Optional[str] = None, limit: int = 100):
+        """List tasks"""
+        task_queue = get_task_queue()
+        if not task_queue:
+            raise HTTPException(status_code=400, detail="Task queue is not enabled")
+        
+        task_status = TaskStatus(status) if status else None
+        tasks = await task_queue.list_tasks(status=task_status, limit=limit)
+        
+        return {
+            "tasks": [
+                {
+                    "task_id": t.task_id,
+                    "status": t.status.value,
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                    "completed_at": t.completed_at.isoformat() if t.completed_at else None
+                }
+                for t in tasks
+            ],
+            "count": len(tasks)
+        }
     
     return app
 

@@ -149,6 +149,20 @@ class StorageConfig(BaseModel):
     backup_interval_hours: int = 24
 
 
+class TaskQueueConfig(BaseModel):
+    """Task queue configuration"""
+    enabled: bool = False
+    backend: str = "celery"  # Options: "celery", "temporal", "none"
+    
+    # Celery settings
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_backend_url: Optional[str] = None
+    
+    # Temporal settings
+    temporal_host: str = "localhost:7233"
+    temporal_namespace: str = "default"
+
+
 class Config(BaseSettings):
     """Main configuration class"""
     system: SystemConfig = Field(default_factory=SystemConfig)
@@ -159,6 +173,7 @@ class Config(BaseSettings):
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     schema_store: Optional[SchemaStoreConfig] = Field(default_factory=SchemaStoreConfig)
+    task_queue: TaskQueueConfig = Field(default_factory=TaskQueueConfig)
 
     @classmethod
     def from_yaml(cls, config_path: str | Path) -> "Config":
