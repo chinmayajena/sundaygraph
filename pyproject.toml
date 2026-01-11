@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sundaygraph"
 version = "1.0.0"
-description = "Agentic AI System with Ontology-Backed Graph"
+description = "SemanticOps for Snowflake Semantic Views + Cortex Analyst reliability"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -21,6 +21,9 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
+
+[project.scripts]
+sundaygraph = "src.cli.main:cli"
 
 dependencies = [
     "python-dotenv>=1.0.0",

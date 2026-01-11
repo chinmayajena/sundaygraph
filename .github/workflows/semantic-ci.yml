@@ -1,0 +1,501 @@
+name: Semantic CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'odl/**/*.json'
+      - 'odl/**/*.yaml'
+      - 'odl/**/*.yml'
+      - 'src/odl/**'
+      - 'src/snowflake/**'
+      - '.github/workflows/semantic-ci.yml'
+
+jobs:
+  semantic-ci:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for diffing
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyyaml jsonschema
+      
+      - name: Detect ODL changes
+        id: odl-changes
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qE '\.(json|yaml|yml)$'; then
+            echo "odl_changed=true" >> $GITHUB_OUTPUT
+            echo "ODL files changed"
+          else
+            echo "odl_changed=false" >> $GITHUB_OUTPUT
+            echo "No ODL files changed"
+          fi
+      
+      - name: Validate ODL
+        id: validate-odl
+        run: |
+          echo "Validating ODL files..."
+          
+          # Find all ODL files
+          ODL_FILES=$(find odl -name "*.json" -o -name "*.yaml" -o -name "*.yml" | grep -E '\.(json|yaml|yml)$' || true)
+          
+          if [ -z "$ODL_FILES" ]; then
+            echo "No ODL files found"
+            exit 0
+          fi
+          
+          VALIDATION_FAILED=false
+          for file in $ODL_FILES; do
+            echo "Validating: $file"
+            if python -c "
+import sys
+import json
+from pathlib import Path
+sys.path.insert(0, '.')
+from src.odl.core import ODLProcessor
+
+try:
+    processor = ODLProcessor()
+    odl_ir, is_valid, errors = processor.process('$file')
+    if not is_valid:
+        print(f'Validation failed for $file:')
+        for error in errors:
+            print(f'  - {error}')
+        sys.exit(1)
+    print(f'✓ $file is valid')
+except Exception as e:
+    print(f'Error validating $file: {e}')
+    sys.exit(1)
+"; then
+              echo "✓ $file passed validation"
+            else
+              echo "✗ $file failed validation"
+              VALIDATION_FAILED=true
+            fi
+          done
+          
+          if [ "$VALIDATION_FAILED" = "true" ]; then
+            echo "validation_passed=false" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "validation_passed=true" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Diff against main
+        id: diff-main
+        if: steps.odl-changes.outputs.odl_changed == 'true'
+        run: |
+          echo "Computing diff against main branch..."
+          
+          # Get changed ODL files
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '\.(json|yaml|yml)$' || true)
+          
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No ODL files changed"
+            exit 0
+          fi
+          
+          # For each changed file, try to compute diff
+          for file in $CHANGED_FILES; do
+            if [ -f "$file" ]; then
+              echo "Processing: $file"
+              python -c "
+import sys
+sys.path.insert(0, '.')
+from src.odl.core import ODLProcessor
+from src.odl.diff import ODLDiffEngine
+
+# Load new version
+processor = ODLProcessor()
+new_ir, new_valid, new_errors = processor.process('$file')
+if not new_valid:
+    print(f'New version invalid: {new_errors}')
+    sys.exit(1)
+
+# Try to load old version from main
+import subprocess
+result = subprocess.run(['git', 'show', 'origin/${{ github.base_ref }}:$file'], 
+                       capture_output=True, text=True)
+if result.returncode == 0:
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        f.write(result.stdout)
+        old_file = f.name
+    
+    old_ir, old_valid, old_errors = processor.process(old_file)
+    if old_valid:
+        # Compute diff
+        engine = ODLDiffEngine()
+        diff_result = engine.diff(old_ir, new_ir)
+        
+        print(f'Diff for $file:')
+        print(f'  Breaking changes: {len(diff_result.breaking_changes)}')
+        print(f'  Non-breaking changes: {len(diff_result.non_breaking_changes)}')
+        
+        if diff_result.breaking_changes:
+            print('  Breaking changes:')
+            for change in diff_result.breaking_changes:
+                print(f'    - {change.element_name}: {change.message}')
+        
+        if not diff_result.overall_pass:
+            print('⚠️  Breaking changes detected!')
+            sys.exit(1)
+    else:
+        print('Old version invalid, skipping diff')
+else:
+    print('File is new, no diff to compute')
+" || echo "Diff computation failed for $file"
+            fi
+          done
+      
+      - name: Compile Snowflake artifact bundle
+        id: compile-snowflake
+        run: |
+          echo "Compiling Snowflake artifact bundle..."
+          
+          # Find ODL files to compile
+          ODL_FILES=$(find odl/examples -name "*.json" | head -1)
+          
+          if [ -z "$ODL_FILES" ]; then
+            echo "No ODL example files found, skipping compilation"
+            exit 0
+          fi
+          
+          # Compile first ODL file as example
+          ODL_FILE=$(echo $ODL_FILES | head -1)
+          echo "Compiling: $ODL_FILE"
+          
+          python -c "
+import sys
+from pathlib import Path
+sys.path.insert(0, '.')
+from src.odl.core import ODLProcessor
+from src.snowflake.snowflake_compiler import SnowflakeCompiler
+
+# Load and process ODL
+processor = ODLProcessor()
+odl_ir, is_valid, errors = processor.process('$ODL_FILE')
+if not is_valid:
+    print(f'ODL validation failed: {errors}')
+    sys.exit(1)
+
+# Compile
+compiler = SnowflakeCompiler()
+options = {
+    'version_id': 'ci-build',
+    'view_name': 'ci_semantic_view',
+    'database': 'CI_DB',
+    'schema': 'PUBLIC'
+}
+
+bundle = compiler.compile(odl_ir, options)
+
+# Check artifacts
+yaml_file = bundle.get_file('semantic_model.yaml')
+verify_file = bundle.get_file('verify.sql')
+deploy_file = bundle.get_file('deploy.sql')
+
+if yaml_file and verify_file and deploy_file:
+    print('✓ Artifact bundle generated successfully')
+    print(f'  - semantic_model.yaml: {len(yaml_file.content)} chars')
+    print(f'  - verify.sql: {len(verify_file.content)} chars')
+    print(f'  - deploy.sql: {len(deploy_file.content)} chars')
+else:
+    print('✗ Missing artifacts in bundle')
+    sys.exit(1)
+"
+      
+      - name: Generate promotion bundle
+        id: promotion-bundle
+        run: |
+          echo "Generating promotion bundle..."
+          
+          # Find ODL files
+          ODL_FILES=$(find odl/examples -name "*.json" | head -1)
+          
+          if [ -z "$ODL_FILES" ]; then
+            echo "No ODL example files found, skipping promotion bundle"
+            exit 0
+          fi
+          
+          ODL_FILE=$(echo $ODL_FILES | head -1)
+          echo "Generating promotion bundle from: $ODL_FILE"
+          
+          python -c "
+import sys
+from pathlib import Path
+sys.path.insert(0, '.')
+from src.odl.core import ODLProcessor
+from src.snowflake.promotion_bundle import PromotionBundleGenerator
+
+# Load and process ODL
+processor = ODLProcessor()
+odl_ir, is_valid, errors = processor.process('$ODL_FILE')
+if not is_valid:
+    print(f'ODL validation failed: {errors}')
+    sys.exit(1)
+
+# Generate promotion bundle
+generator = PromotionBundleGenerator()
+environments = {
+    'dev': {
+        'database': 'DEV_DB',
+        'schema': 'PUBLIC',
+        'view_name': 'dev_semantic_view'
+    },
+    'prod': {
+        'database': 'PROD_DB',
+        'schema': 'PUBLIC',
+        'view_name': 'prod_semantic_view'
+    }
+}
+
+bundle = generator.generate_promotion_bundle(
+    odl_ir=odl_ir,
+    environments=environments,
+    options={'version_id': 'ci-${{ github.sha }}'}
+)
+
+# Create ZIP
+zip_path = Path('promotion-bundle.zip')
+generator.create_zip_bundle(bundle, zip_path)
+
+print('✓ Promotion bundle generated successfully')
+print(f'  - Bundle: {zip_path}')
+print(f'  - Environments: {list(environments.keys())}')
+
+# List contents
+for file in sorted(bundle.files, key=lambda f: f.path):
+    print(f'  - {file.path}')
+"
+      
+      - name: Upload promotion bundle
+        if: steps.promotion-bundle.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: promotion-bundle
+          path: promotion-bundle.zip
+          if-no-files-found: ignore
+      
+      - name: Run evaluation gates
+        id: eval-gates
+        run: |
+          echo "Running evaluation gates..."
+          
+          # Find ODL files to evaluate
+          ODL_FILES=$(find odl/examples -name "*.json" | head -1)
+          
+          if [ -z "$ODL_FILES" ]; then
+            echo "No ODL example files found, skipping evaluation"
+            exit 0
+          fi
+          
+          ODL_FILE=$(echo $ODL_FILES | head -1)
+          echo "Evaluating: $ODL_FILE"
+          
+          python -c "
+import sys
+sys.path.insert(0, '.')
+from src.odl.core import ODLProcessor
+from src.odl.evaluation import ODLEvaluator
+
+# Load and process ODL
+processor = ODLProcessor()
+odl_ir, is_valid, errors = processor.process('$ODL_FILE')
+if not is_valid:
+    print(f'ODL validation failed: {errors}')
+    sys.exit(1)
+
+# Evaluate with strict profile
+evaluator = ODLEvaluator(threshold_profile='strict')
+result = evaluator.evaluate(odl_ir, version_id=1)
+
+print(f'Evaluation results:')
+print(f'  Total gates: {result.metrics.get(\"total_gates\", 0)}')
+print(f'  Passed: {result.metrics.get(\"passed\", 0)}')
+print(f'  Failed: {result.metrics.get(\"failed\", 0)}')
+print(f'  Warnings: {result.metrics.get(\"warnings\", 0)}')
+print(f'  Overall: {\"PASS\" if result.overall_pass else \"FAIL\"}')
+
+if result.failed > 0:
+    print('Failed gates:')
+    for gate in result.gate_results:
+        if gate.status.value == 'fail':
+            print(f'  - {gate.gate_name}: {gate.message}')
+
+if not result.overall_pass:
+    print('✗ Evaluation gates failed')
+    sys.exit(1)
+else:
+    print('✓ All evaluation gates passed')
+"
+      
+      - name: Check Snowflake credentials
+        id: check-creds
+        run: |
+          if [ -n "${{ secrets.SNOWFLAKE_ACCOUNT_URL }}" ] && \
+             ([ -n "${{ secrets.SNOWFLAKE_API_KEY }}" ] || [ -n "${{ secrets.SNOWFLAKE_SESSION_TOKEN }}" ]); then
+            echo "creds_available=true" >> $GITHUB_OUTPUT
+            echo "Snowflake credentials available"
+          else
+            echo "creds_available=false" >> $GITHUB_OUTPUT
+            echo "Snowflake credentials not available, skipping live steps"
+          fi
+      
+      - name: Verify semantic model (verify-only)
+        id: verify-only
+        if: steps.check-creds.outputs.creds_available == 'true'
+        env:
+          SNOWFLAKE_ACCOUNT_URL: ${{ secrets.SNOWFLAKE_ACCOUNT_URL }}
+          SNOWFLAKE_API_KEY: ${{ secrets.SNOWFLAKE_API_KEY }}
+          SNOWFLAKE_SESSION_TOKEN: ${{ secrets.SNOWFLAKE_SESSION_TOKEN }}
+        run: |
+          echo "Running verify-only step (requires Snowflake connection)..."
+          echo "Note: This step would execute verify.sql in Snowflake"
+          echo "For now, we verify that verify.sql can be generated"
+          
+          # Find ODL files
+          ODL_FILES=$(find odl/examples -name "*.json" | head -1)
+          if [ -z "$ODL_FILES" ]; then
+            echo "No ODL files found"
+            exit 0
+          fi
+          
+          ODL_FILE=$(echo $ODL_FILES | head -1)
+          
+          python -c "
+import sys
+sys.path.insert(0, '.')
+from src.odl.core import ODLProcessor
+from src.snowflake.snowflake_compiler import SnowflakeCompiler
+
+# Load and compile
+processor = ODLProcessor()
+odl_ir, is_valid, errors = processor.process('$ODL_FILE')
+if not is_valid:
+    print(f'ODL validation failed: {errors}')
+    sys.exit(1)
+
+compiler = SnowflakeCompiler()
+options = {
+    'version_id': 'ci-verify',
+    'view_name': 'ci_verify_view',
+    'database': 'CI_DB',
+    'schema': 'PUBLIC'
+}
+
+bundle = compiler.compile(odl_ir, options)
+verify_file = bundle.get_file('verify.sql')
+
+if verify_file:
+    print('✓ verify.sql generated')
+    print('  To run in Snowflake:')
+    print('  ' + verify_file.content.split(chr(10))[4].strip())
+    print('')
+    print('Note: Actual verification requires Snowflake connection')
+    print('      This CI step validates that verify.sql can be generated')
+else:
+    print('✗ Failed to generate verify.sql')
+    sys.exit(1)
+"
+      
+      - name: Run Cortex regression tests
+        id: cortex-regress
+        if: steps.check-creds.outputs.creds_available == 'true'
+        continue-on-error: true
+        env:
+          SNOWFLAKE_ACCOUNT_URL: ${{ secrets.SNOWFLAKE_ACCOUNT_URL }}
+          SNOWFLAKE_API_KEY: ${{ secrets.SNOWFLAKE_API_KEY }}
+          SNOWFLAKE_SESSION_TOKEN: ${{ secrets.SNOWFLAKE_SESSION_TOKEN }}
+        run: |
+          echo "Running Cortex Analyst regression tests..."
+          
+          # Check if golden_questions.yaml exists
+          if [ ! -f "examples/golden_questions.yaml" ]; then
+            echo "⚠️  golden_questions.yaml not found, skipping regression tests"
+            exit 0
+          fi
+          
+          # Check if semantic view name is provided
+          SEMANTIC_VIEW="${{ secrets.SNOWFLAKE_SEMANTIC_VIEW }}"
+          if [ -z "$SEMANTIC_VIEW" ]; then
+            echo "⚠️  SNOWFLAKE_SEMANTIC_VIEW secret not set, skipping regression tests"
+            exit 0
+          fi
+          
+          echo "Running regression tests against: $SEMANTIC_VIEW"
+          
+          # Build command with conditional auth
+          CMD="sundaygraph snowflake cortex-regress"
+          CMD="$CMD --semantic-view \"$SEMANTIC_VIEW\""
+          CMD="$CMD --questions examples/golden_questions.yaml"
+          CMD="$CMD --junit-xml test-results.xml"
+          CMD="$CMD --account-url \"$SNOWFLAKE_ACCOUNT_URL\""
+          
+          if [ -n "$SNOWFLAKE_API_KEY" ]; then
+            CMD="$CMD --api-key \"$SNOWFLAKE_API_KEY\""
+          elif [ -n "$SNOWFLAKE_SESSION_TOKEN" ]; then
+            CMD="$CMD --session-token \"$SNOWFLAKE_SESSION_TOKEN\""
+          fi
+          
+          # Run cortex regression (non-blocking)
+          eval $CMD || {
+            echo "⚠️  Cortex regression tests failed or had errors"
+            echo "This is non-blocking for CI"
+          }
+          
+          # Check if results were generated
+          if [ -f "test-results.xml" ]; then
+            echo "✓ JUnit XML generated: test-results.xml"
+          else
+            echo "⚠️  JUnit XML not generated (tests may have been skipped)"
+          fi
+      
+      - name: Upload test results
+        if: always() && steps.cortex-regress.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cortex-regression-results
+          path: test-results.xml
+          if-no-files-found: ignore
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Semantic CI Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Validate ODL | ${{ steps.validate-odl.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Diff against main | ${{ steps.diff-main.outcome == 'skipped' && '⏭️ Skipped' || steps.diff-main.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Compile Snowflake | ${{ steps.compile-snowflake.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Evaluation gates | ${{ steps.eval-gates.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Verify-only | ${{ steps.verify-only.outcome == 'skipped' && '⏭️ Skipped' || steps.verify-only.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cortex regression | ${{ steps.cortex-regress.outcome == 'skipped' && '⏭️ Skipped' || steps.cortex-regress.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.check-creds.outputs.creds_available }}" = "false" ]; then
+            echo "⚠️  **Snowflake credentials not available** - live steps skipped" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "To enable full CI (including verify-only and Cortex regression), configure:" >> $GITHUB_STEP_SUMMARY
+            echo "- \`SNOWFLAKE_ACCOUNT_URL\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`SNOWFLAKE_API_KEY\` or \`SNOWFLAKE_SESSION_TOKEN\`" >> $GITHUB_STEP_SUMMARY
+            echo "- \`SNOWFLAKE_SEMANTIC_VIEW\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "See \`.github/workflows/SECRETS_SETUP.md\` for setup instructions." >> $GITHUB_STEP_SUMMARY
+          fi

@@ -1,0 +1,297 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://semanticops.io/schemas/odl.schema.json",
+  "title": "Ontology Definition Language (ODL) Schema",
+  "description": "Schema for defining ontologies that can be compiled to Snowflake semantic models",
+  "type": "object",
+  "required": ["version", "objects"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "ODL schema version",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "examples": ["1.0.0"]
+    },
+    "name": {
+      "type": "string",
+      "description": "Name of the ontology/semantic model"
+    },
+    "description": {
+      "type": "string",
+      "description": "Description of the ontology/semantic model"
+    },
+    "objects": {
+      "type": "array",
+      "description": "List of objects (entities) in the ontology",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/object"
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "description": "List of relationships between objects",
+      "items": {
+        "$ref": "#/definitions/relationship"
+      },
+      "default": []
+    },
+    "metrics": {
+      "type": "array",
+      "description": "List of metrics (measures) in the semantic model",
+      "items": {
+        "$ref": "#/definitions/metric"
+      },
+      "default": []
+    },
+    "dimensions": {
+      "type": "array",
+      "description": "List of dimensions in the semantic model",
+      "items": {
+        "$ref": "#/definitions/dimension"
+      },
+      "default": []
+    },
+    "snowflake": {
+      "$ref": "#/definitions/snowflakeMapping",
+      "description": "Snowflake-specific mapping configuration"
+    }
+  },
+  "definitions": {
+    "object": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the object (entity)",
+          "pattern": "^[A-Z][a-zA-Z0-9_]*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the object"
+        },
+        "identifiers": {
+          "type": "array",
+          "description": "List of identifier properties (primary keys)",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "properties": {
+          "type": "array",
+          "description": "List of properties (attributes) of the object",
+          "items": {
+            "$ref": "#/definitions/property"
+          },
+          "default": []
+        },
+        "snowflake": {
+          "$ref": "#/definitions/objectSnowflakeMapping",
+          "description": "Snowflake-specific mapping for this object"
+        }
+      }
+    },
+    "property": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the property",
+          "pattern": "^[a-z][a-zA-Z0-9_]*$"
+        },
+        "type": {
+          "type": "string",
+          "description": "Data type of the property",
+          "enum": [
+            "string",
+            "number",
+            "integer",
+            "decimal",
+            "boolean",
+            "date",
+            "timestamp",
+            "time",
+            "array",
+            "object"
+          ]
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the property"
+        },
+        "nullable": {
+          "type": "boolean",
+          "description": "Whether the property can be null",
+          "default": true
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether the property is required",
+          "default": false
+        }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "required": ["name", "from", "to", "joinKeys"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the relationship",
+          "pattern": "^[a-z][a-zA-Z0-9_]*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the relationship"
+        },
+        "from": {
+          "type": "string",
+          "description": "Source object name",
+          "pattern": "^[A-Z][a-zA-Z0-9_]*$"
+        },
+        "to": {
+          "type": "string",
+          "description": "Target object name",
+          "pattern": "^[A-Z][a-zA-Z0-9_]*$"
+        },
+        "joinKeys": {
+          "type": "array",
+          "description": "List of join key pairs [fromProperty, toProperty]",
+          "items": {
+            "type": "array",
+            "items": [
+              {
+                "type": "string",
+                "description": "Property name in source object"
+              },
+              {
+                "type": "string",
+                "description": "Property name in target object"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "minItems": 1
+        },
+        "cardinality": {
+          "type": "string",
+          "description": "Cardinality of the relationship",
+          "enum": ["one_to_one", "one_to_many", "many_to_one", "many_to_many"],
+          "default": "many_to_one"
+        }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "required": ["name", "expression", "grain"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the metric",
+          "pattern": "^[A-Z][a-zA-Z0-9_]*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the metric"
+        },
+        "expression": {
+          "type": "string",
+          "description": "SQL expression for calculating the metric"
+        },
+        "grain": {
+          "type": "array",
+          "description": "List of objects that define the grain of this metric",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][a-zA-Z0-9_]*$"
+          },
+          "minItems": 1
+        },
+        "type": {
+          "type": "string",
+          "description": "Type of the metric",
+          "enum": ["sum", "count", "average", "min", "max", "distinct_count", "custom"],
+          "default": "custom"
+        },
+        "format": {
+          "type": "string",
+          "description": "Format string for displaying the metric (e.g., '$#,##0.00')"
+        }
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "required": ["name", "sourceProperty"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the dimension",
+          "pattern": "^[A-Z][a-zA-Z0-9_]*$"
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the dimension"
+        },
+        "sourceProperty": {
+          "type": "string",
+          "description": "Property path in format 'Object.property' (e.g., 'Customer.name')"
+        },
+        "type": {
+          "type": "string",
+          "description": "Type of the dimension",
+          "enum": ["categorical", "temporal", "geographic", "numeric"],
+          "default": "categorical"
+        }
+      }
+    },
+    "snowflakeMapping": {
+      "type": "object",
+      "required": ["database", "schema"],
+      "properties": {
+        "database": {
+          "type": "string",
+          "description": "Snowflake database name"
+        },
+        "schema": {
+          "type": "string",
+          "description": "Snowflake schema name"
+        },
+        "warehouse": {
+          "type": "string",
+          "description": "Snowflake warehouse name (optional)"
+        },
+        "tableMappings": {
+          "type": "object",
+          "description": "Mapping of object names to Snowflake table names",
+          "patternProperties": {
+            "^[A-Z][a-zA-Z0-9_]*$": {
+              "type": "string",
+              "description": "Snowflake table name"
+            }
+          }
+        }
+      }
+    },
+    "objectSnowflakeMapping": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "Snowflake table name for this object"
+        },
+        "schema": {
+          "type": "string",
+          "description": "Snowflake schema name (overrides global schema)"
+        },
+        "database": {
+          "type": "string",
+          "description": "Snowflake database name (overrides global database)"
+        }
+      }
+    }
+  }
+}

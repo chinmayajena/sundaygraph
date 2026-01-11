@@ -1,0 +1,47 @@
+# Golden Questions for Cortex Analyst Regression Tests
+# This file defines questions and expected results for regression testing
+
+questions:
+  - question: "What is the total revenue?"
+    expected_tables:
+      - "OrderItem"
+      - "Order"
+    expected_sql_patterns:
+      - "SUM"
+      - "OrderItem"
+    expected_answer_snippet: "total revenue"
+  
+  - question: "How many orders were placed?"
+    expected_tables:
+      - "Order"
+    expected_sql_patterns:
+      - "COUNT"
+      - "Order"
+    expected_answer_snippet: "orders"
+  
+  - question: "What is the average order value?"
+    expected_tables:
+      - "OrderItem"
+      - "Order"
+    expected_sql_patterns:
+      - "AVG"
+      - "SUM"
+    expected_answer_snippet: "average"
+  
+  - question: "Which customers have placed the most orders?"
+    expected_tables:
+      - "Customer"
+      - "Order"
+    expected_sql_patterns:
+      - "Customer"
+      - "ORDER BY"
+      - "DESC"
+    expected_answer_snippet: "customers"
+  
+  - question: "What products are in the electronics category?"
+    expected_tables:
+      - "Product"
+    expected_sql_patterns:
+      - "Product"
+      - "category"
+    expected_answer_snippet: "electronics"

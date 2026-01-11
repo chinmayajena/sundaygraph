@@ -1,500 +1,480 @@
-# SundayGraph - Agentic AI System with Ontology-Backed Graph
+# SemanticOps for Snowflake
 
-A production-grade Agentic AI system that transforms structured and unstructured data into an ontology-backed knowledge graph. Inspired by [LightRAG](https://github.com/HKUDS/LightRAG) and [OntoCast](https://github.com/growgraph/ontocast).
+**SemanticOps for Snowflake Semantic Views + Cortex Analyst reliability**
+
+A production-grade system for building, validating, and deploying Snowflake semantic views with Cortex Analyst regression testing. Transform your data into Snowflake semantic models using LLM-powered ontology definition, then ensure reliability with automated Cortex Analyst validation.
+
+## What is SemanticOps?
+
+SemanticOps automates the lifecycle of Snowflake semantic views:
+1. **Define** your domain using Ontology Definition Language (ODL)
+2. **Compile** ODL to Snowflake semantic model YAML
+3. **Verify** semantic models with `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML(..., verify_only=>TRUE)`
+4. **Deploy** validated semantic views to Snowflake
+5. **Test** with Cortex Analyst regression tests to ensure reliability
 
 ## Features
 
-- **LLM-Powered Schema Building**: Automatically builds ontology schema from domain descriptions using OpenAI reasoning (OntoCast-inspired)
+- **LLM-Powered ODL Generation**: Automatically generates Ontology Definition Language from domain descriptions or data samples
+- **Snowflake Semantic Model Compilation**: Converts ODL to Snowflake semantic model YAML format
+- **Pre-Deployment Verification**: Validates semantic models using Snowflake's `SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML` with `verify_only=>TRUE`
+- **Cortex Analyst Regression Testing**: Automated tests to ensure semantic views work correctly with Cortex Analyst
+- **CodeAct-Style Extraction**: LLM generates Python code once per file type, then executes on all rows (99%+ cost reduction)
+- **Intelligent Schema Inference**: Analyzes data samples to generate extraction rules, avoiding per-row LLM calls
+- **Task Queue Support**: Async processing with Celery or Temporal for scalable, reliable operations
 - **PostgreSQL Schema Storage**: Stores ontology schema metadata in PostgreSQL for versioning and evolution tracking
-- **Lightweight Graph DB**: Uses in-memory/NetworkX or Oxigraph SPARQL database for ontology-backed graphs
-- **Dynamic Schema Evolution**: Automatically evolves schema based on new data patterns
-- **Multi-Format Data Ingestion**: Handles structured (JSON, CSV, XML) and unstructured (text, documents) data
-- **Workspace-Based Multi-Tenancy**: Isolated data and graphs per workspace with user-specific access
+- **Workspace-Based Multi-Tenancy**: Isolated data and semantic models per workspace
 - **File Management**: Upload, preview, and manage files within workspaces (CSV, JSON, PDF, text)
 - **LLM Cost Optimization**: Response caching, smart model selection, and token tracking
-- **Ontology Evaluation**: Quality metrics for schema completeness, consistency, and coherence
-- **LLM-Powered Reasoning**: Uses OpenAI for intelligent entity extraction, relation discovery, and ontology mapping
-- **Agentic Architecture**: Modular agents for specialized tasks
-- **RESTful API**: FastAPI-based API for easy integration
-- **Modern Web UI**: Next.js frontend with Tailwind CSS and shadcn/ui
-- **Docker Support**: Complete Docker Compose setup with Frontend, API, PostgreSQL and Oxigraph
 - **Production-Ready**: Configurable, maintainable, and scalable design
 
-## Technical Architecture
+### Optional Features
 
-### System Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Client Layer                             │
-│  (Web UI, Mobile App, CLI, External Services)                  │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ HTTP/REST
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      FastAPI Layer                              │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  REST API Endpoints                                        │  │
-│  │  - /api/v1/ingest    - Data ingestion                      │  │
-│  │  - /api/v1/query     - Graph queries                       │  │
-│  │  - /api/v1/entities  - Entity management                   │  │
-│  │  - /api/v1/relations - Relation management                │  │
-│  │  - /api/v1/stats     - System statistics                  │  │
-│  │  - /health          - Health checks                        │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   Orchestration Layer                            │
-│                      (SundayGraph)                               │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  Configuration Manager                                     │  │
-│  │  - YAML-based config                                       │  │
-│  │  - Environment variables                                   │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        │                    │                    │
-        ▼                    ▼                    ▼
-┌───────────────┐  ┌───────────────┐  ┌───────────────┐
-│   Data        │  │   Ontology    │  │   Graph       │
-│   Ingestion   │  │   Agent       │  │   Construction│
-│   Agent       │  │  (LLM-Powered)│  │   Agent       │
-└───────┬───────┘  └───────┬───────┘  └───────┬───────┘
-        │                  │                  │
-        │                  ▼                  │
-        │          ┌──────────────┐           │
-        │          │  LLM Service │           │
-        │          │  (Thinking)  │           │
-        │          └──────────────┘           │
-        │                  │                  │
-        └──────────────────┼──────────────────┘
-                           │
-                           ▼
-                ┌──────────────────────┐
-                │    Graph Store        │
-                │  (Abstraction Layer)   │
-                └───────────┬───────────┘
-                            │
-            ┌───────────────┴───────────────┐
-            │                               │
-            ▼                               ▼
-    ┌───────────────┐              ┌───────────────┐
-    │  Memory       │              │  Oxigraph      │
-    │  Graph Store  │              │  Graph Store   │
-    │  (NetworkX)   │              │  (SPARQL/RDF)   │
-    └───────────────┘              └───────────────┘
-```
-
-## Technical Flow
-
-### 1. Request Flow (API → Processing)
-
-```
-Client Request (HTTP/REST)
-    │
-    ▼
-FastAPI Endpoint (src/api/app.py)
-    ├─ Request Validation (Pydantic models)
-    ├─ Authentication/Authorization (if enabled)
-    └─ Route to Handler
-    │
-    ▼
-SundayGraph Instance (src/core/sundaygraph.py)
-    ├─ Load Configuration (config/config.yaml)
-    ├─ Initialize Components:
-    │   ├─ LLMService (if OpenAI API key set)
-    │   ├─ SchemaStore (PostgreSQL, if enabled)
-    │   ├─ OntologyManager (load schema from YAML/PostgreSQL)
-    │   ├─ GraphStore (Memory/Oxigraph based on config)
-    │   └─ Agents (DataIngestion, Ontology, GraphConstruction, Query)
-    └─ Execute Requested Operation
-```
-
-### 2. Schema Building Flow (OntoCast-inspired)
-
-```
-POST /api/v1/ontology/build
-    │
-    ▼
-SundayGraph.build_schema_from_domain()
-    │
-    ▼
-OntologySchemaBuilder.build_schema_from_domain()
-    ├─ Prepare LLM Prompt with:
-    │   ├─ Domain description
-    │   ├─ Existing schema (if any)
-    │   └─ Schema building instructions
-    │
-    ▼
-LLMService.reason_about_ontology()
-    ├─ Call OpenAI API (gpt-4)
-    ├─ Generate reasoning about:
-    │   ├─ Entity types needed
-    │   ├─ Relations between entities
-    │   ├─ Properties for each entity
-    │   └─ Constraints and validations
-    │
-    ▼
-Parse LLM Response → Ontology Schema Object
-    │
-    ▼
-SchemaStore.save_schema() (if PostgreSQL enabled)
-    ├─ Save schema to PostgreSQL
-    ├─ Version tracking
-    ├─ Evolution history
-    └─ Return schema_id
-    │
-    ▼
-Update OntologyManager with new schema
-    │
-    ▼
-Return schema statistics (entities, relations, version)
-```
-
-### 3. Data Ingestion Flow (LightRAG-inspired)
-
-```
-POST /api/v1/ingest
-    │
-    ▼
-SundayGraph.ingest_data(input_path)
-    │
-    ▼
-[Step 1] DataIngestionAgent.process(input_path)
-    ├─ Detect file format (JSON, CSV, TXT, XML, PDF)
-    ├─ Load file using appropriate DataLoader
-    ├─ Process directory (if path is directory)
-    ├─ Chunk large documents (chunk_size, overlap)
-    ├─ Extract metadata (filename, size, type)
-    └─ Return: List[Dict[str, Any]] (raw_data)
-    │
-    ▼
-[Step 2] Entity & Relation Extraction
-    For each item in raw_data:
-    │
-    ├─ Extract Entity:
-    │   ├─ SundayGraph._extract_entity_from_data()
-    │   │   ├─ Infer entity type (OntologyAgent.suggest_entity_type())
-    │   │   ├─ Extract properties
-    │   │   └─ Generate entity ID
-    │   │
-    │   └─ OntologyAgent.process(entity_type, properties)
-    │       ├─ [If LLM enabled] LLMService.reason_about_ontology()
-    │       │   ├─ Validate entity type against schema
-    │       │   ├─ Suggest property mappings
-    │       │   └─ Return reasoning result
-    │       │
-    │       ├─ OntologyManager.validate_entity()
-    │       │   ├─ Check entity type exists in schema
-    │       │   ├─ Validate required properties
-    │       │   └─ Check property types
-    │       │
-    │       └─ Map properties to schema
-    │           └─ Return: (is_valid, errors, mapped_properties)
-    │
-    └─ Extract Relations:
-        ├─ SundayGraph._extract_relations_from_data()
-        │   ├─ Check for explicit relations in data
-        │   ├─ Extract from content (if unstructured)
-        │   └─ Generate relation objects
-        │
-        └─ OntologyAgent.validate_relation()
-            ├─ [If LLM enabled] LLM semantic validation
-            └─ OntologyManager.validate_relation()
-    │
-    ▼
-[Step 3] GraphConstructionAgent.process(entities, relations)
-    For each entity:
-    │   ├─ Generate entity ID (if not provided)
-    │   ├─ Check for duplicates (if deduplication enabled)
-    │   │   └─ Hash properties → check cache
-    │   └─ GraphStore.add_entity(entity_type, entity_id, properties)
-    │
-    For each relation:
-    │   ├─ Validate source_id and target_id exist
-    │   ├─ Check for existing relation (if merge enabled)
-    │   └─ GraphStore.add_relation(relation_type, source_id, target_id, properties)
-    │
-    ▼
-Return Statistics
-    ├─ entities_added
-    ├─ relations_added
-    ├─ entities_skipped (duplicates)
-    └─ relations_skipped
-```
-
-### 4. Query Flow
-
-```
-POST /api/v1/query
-    │
-    ▼
-SundayGraph.query(query, query_type)
-    │
-    ▼
-QueryAgent.process(query, query_type)
-    ├─ Parse query type (entity, relation, neighbor, path)
-    │
-    ├─ Entity Query:
-    │   └─ GraphStore.query_entities()
-    │       ├─ Filter by type (if specified)
-    │       ├─ Filter by properties
-    │       └─ Return matching entities
-    │
-    ├─ Relation Query:
-    │   └─ GraphStore.query_relations()
-    │       ├─ Filter by relation type
-    │       ├─ Filter by source/target
-    │       └─ Return matching relations
-    │
-    ├─ Neighbor Query:
-    │   └─ GraphStore.get_neighbors()
-    │       ├─ Get entity neighbors
-    │       ├─ Filter by relation type
-    │       └─ Return neighbor entities
-    │
-    └─ Path Query:
-        └─ GraphStore.find_path()
-            ├─ Find shortest path between entities
-            └─ Return path with relations
-    │
-    ▼
-Return Query Results (List[Dict[str, Any]])
-```
-
-### 5. Component Interactions
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Component Dependencies                    │
-└─────────────────────────────────────────────────────────────┘
-
-SundayGraph (Orchestrator)
-    ├─ Config (YAML → Pydantic models)
-    ├─ LLMService (OpenAI API client)
-    ├─ SchemaStore (PostgreSQL connection)
-    ├─ OntologyManager (Schema validation)
-    ├─ GraphStore (Memory/Oxigraph abstraction)
-    │
-    └─ Agents:
-        ├─ DataIngestionAgent
-        │   └─ DataProcessor
-        │       └─ DataLoaders (JSON, CSV, TXT, XML, PDF)
-        │
-        ├─ OntologyAgent
-        │   ├─ OntologyManager
-        │   └─ LLMService (for reasoning)
-        │
-        ├─ GraphConstructionAgent
-        │   └─ GraphStore
-        │
-        └─ QueryAgent
-            └─ GraphStore
-
-Data Flow:
-    File → DataLoader → DataProcessor → DataIngestionAgent
-    → Entity Extraction → OntologyAgent (validation + LLM reasoning)
-    → GraphConstructionAgent → GraphStore → Persistence
-```
-
-### 6. LLM Integration Points
-
-The system uses LLM reasoning at three key points:
-
-1. **Schema Building** (`OntologySchemaBuilder`)
-   - Input: Domain description
-   - Output: Complete ontology schema (entities, relations, properties)
-   - LLM: Generates schema from scratch or evolves existing schema
-
-2. **Entity Validation** (`OntologyAgent.process()`)
-   - Input: Entity type + properties
-   - Output: Validated entity with mapped properties
-   - LLM: Reasons about correct entity type, property mapping, semantic correctness
-
-3. **Relation Validation** (`OntologyAgent.validate_relation()`)
-   - Input: Relation type, source type, target type
-   - Output: Validation result with semantic checks
-   - LLM: Validates semantic correctness of relations
-
-### 7. Storage Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Storage Layers                            │
-└─────────────────────────────────────────────────────────────┘
-
-1. Schema Storage (PostgreSQL - optional)
-   ├─ Schema versions
-   ├─ Evolution history
-   ├─ Metadata
-   └─ Used by: SchemaStore, OntologyManager
-
-2. Graph Storage (Memory or Oxigraph)
-   ├─ Memory (NetworkX):
-   │   ├─ Fast for development/testing
-   │   ├─ In-memory only
-   │   └─ No persistence (unless pickled)
-   │
-   └─ Oxigraph (Production):
-       ├─ Lightweight SPARQL/RDF database
-       ├─ Native ontology support
-       ├─ Persistent graph storage
-       ├─ Workspace namespace isolation
-       └─ SPARQL query support
-
-3. File System
-   ├─ Input data: data/input/
-   ├─ Output/cache: data/output/, data/cache/
-   └─ Logs: logs/
-```
-
-### LLM-Powered Features
-
-The system uses **thinking LLMs** for:
-
-1. **Intelligent Entity Extraction**
-   - Infers entity types from unstructured data
-   - Maps properties to ontology schema
-   - Suggests missing properties
-
-2. **Semantic Relation Discovery**
-   - Identifies relationships between entities
-   - Validates relation semantic correctness
-   - Suggests appropriate relation types
-
-3. **Ontology Reasoning**
-   - Validates entities against schema with reasoning
-   - Maps properties intelligently
-   - Suggests ontology improvements
-
-4. **Context-Aware Processing**
-   - Uses context for better entity extraction
-   - Understands domain-specific terminology
-   - Adapts to different data sources
+- **Graph Storage** (Optional): In-memory/NetworkX or Oxigraph SPARQL database for graph exploration (not required for Snowflake semantic views)
+- **Graph Visualization**: View workspace-specific graph nodes and edges (optional, for exploration)
 
 ## Quick Start
 
-### Using Docker Compose (Recommended)
+### Prerequisites
 
-**Prerequisites:** Docker Desktop must be running
+- Python 3.10+
+- Snowflake account with Cortex Analyst enabled
+- Snowflake connection credentials
+- OpenAI API key (for LLM-powered ODL generation)
 
-```bash
-# Start all services (Frontend + API + PostgreSQL + Oxigraph)
-docker-compose up -d
-
-# Check logs
-docker-compose logs -f frontend
-docker-compose logs -f sundaygraph
-
-# Stop services
-docker-compose down
-```
-
-Services will be available at:
-- **Frontend**: http://localhost:3000 (Next.js UI)
-- **API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
-- **PostgreSQL**: localhost:5432 (schema metadata)
-- **Oxigraph SPARQL**: http://localhost:7878/query (graph database)
-
-### Local Development (No Docker)
+### Installation
 
 ```bash
-# Create virtual environment
+# Clone repository
+git clone <repository-url>
+cd sundaygraph
+
+# Create virtual environment (recommended)
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies
-pip install -e .
+pip install -e ".[dev]"
 
-# Run server
-python run_local.py
-# Or: python -m uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+# Copy environment variables template
+cp .env.example .env
+# Edit .env with your configuration
+
+# Run database migrations
+python migrations/run_migrations.py
 ```
-
-**Note:** Local runs use memory backend by default. Set `graph.backend: "oxigraph"` in config.yaml to use Oxigraph.
 
 ### Configuration
 
-1. **Set OpenAI API Key** (required for schema building):
-   
-   Create a `.env` file in the project root:
+1. **Set Environment Variables**:
+
+   Copy `.env.example` to `.env` and configure:
    ```bash
-   # .env
-   OPENAI_API_KEY=your-openai-api-key-here
-   ANTHROPIC_API_KEY=your-anthropic-key-here  # Optional
-   ```
-   
-   The application will automatically load environment variables from `.env` file.
-
-2. **Configure Graph Backend in `config/config.yaml`**:
-   
-   For production with persistent graph storage:
-   ```yaml
-   graph:
-     backend: "oxigraph"  # Use Oxigraph for SPARQL/RDF graph storage
-     oxigraph:
-       sparql_endpoint: "http://oxigraph:7878/query"
-       update_endpoint: "http://oxigraph:7878/update"
-       default_graph_uri: "http://sundaygraph.org/graph"
-   ```
-   
-   For development/testing (in-memory):
-   ```yaml
-   graph:
-     backend: "memory"  # Fast in-memory graph (no persistence)
+   cp .env.example .env
+   # Edit .env with your settings:
+   # - OPENAI_API_KEY (required for ODL generation)
+   # - DATABASE_URL (for PostgreSQL)
+   # - SNOWFLAKE_* (optional, for semantic views)
    ```
 
-3. **Configure LLM and PostgreSQL in `config/config.yaml`**:
+2. **Configure Application** (optional):
+
+   Edit `config/config.yaml` for advanced settings:
+   - Graph backend (memory/oxigraph)
+   - LLM provider and model
+   - Task queue configuration
+
+### Quickstart: Create and Deploy Snowflake Semantic View
+
+#### Step 1: Create ODL (Ontology Definition Language)
+
+Create an ODL file defining your domain:
+
 ```yaml
-processing:
-  llm:
-    provider: "openai"
-    model: "gpt-4o-mini"  # Cost-optimized model for simple tasks
-    temperature: 0.7
-    max_tokens: 2000
-    enable_cache: true  # Enable LLM response caching
-    cache_ttl: 3600  # Cache TTL in seconds
+# my_domain.odl
+entities:
+  - name: Customer
+    properties:
+      - name: customer_id
+        type: string
+        primary_key: true
+      - name: name
+        type: string
+      - name: email
+        type: string
+      - name: created_at
+        type: timestamp
+  
+  - name: Order
+    properties:
+      - name: order_id
+        type: string
+        primary_key: true
+      - name: customer_id
+        type: string
+        foreign_key: Customer.customer_id
+      - name: total_amount
+        type: decimal
+      - name: order_date
+        type: date
 
-ontology:
-  build_with_llm: true  # Build schema using LLM reasoning
-  store_in_postgres: true  # Store schema in PostgreSQL
-  evolve_automatically: true  # Evolve schema based on data
-  enable_evaluation: true  # Enable ontology quality evaluation
-
-schema_store:
-  enabled: true
-  host: "postgres"  # "localhost" for local dev, "postgres" for Docker
-  port: 5432
-  database: "sundaygraph"
-  user: "postgres"
-  password: "password"
+relations:
+  - name: placed_by
+    source: Order
+    target: Customer
+    properties:
+      - name: order_date
+        type: date
 ```
 
-## Architecture Decision: Monolithic vs Microservices
+Or use LLM to generate ODL from domain description:
 
-### Why Monolithic for This System?
+```bash
+curl -X POST "http://localhost:8000/api/v1/odl/generate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "domain_description": "E-commerce system with customers, orders, and products"
+  }'
+```
 
-SundayGraph uses a **monolithic architecture with modular agents** because:
+#### Step 2: Compile to Snowflake Semantic Model YAML
 
-1. **AI/ML Ecosystem Unity**: All components (LLMs, NLP, graph processing) are Python-native
-2. **Shared Context**: Agents share LLM instances, embeddings, and models efficiently
-3. **Performance**: In-process communication is faster than network calls
-4. **Simplicity**: Easier to develop, test, and deploy
-5. **Resource Efficiency**: Models loaded once, shared across agents
+Compile ODL to Snowflake semantic model format:
 
-### When Microservices Make Sense
+```bash
+curl -X POST "http://localhost:8000/api/v1/snowflake/compile" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "odl_file": "my_domain.odl",
+    "workspace_id": "standard"
+  }'
+```
 
-Microservices are beneficial when:
-- Different technology stacks are needed
-- Independent scaling is required
-- Team boundaries exist
-- Fault isolation is critical
+Response:
+```json
+{
+  "semantic_model_yaml": "...",
+  "entities": ["Customer", "Order"],
+  "relations": ["placed_by"]
+}
+```
 
-**See [docs/MICROSERVICES.md](docs/MICROSERVICES.md) for detailed analysis and migration guide.**
+#### Step 3: Verify with Snowflake
+
+Verify the semantic model using Snowflake's verification function:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/snowflake/verify" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "semantic_model_yaml": "...",
+    "workspace_id": "standard"
+  }'
+```
+
+This calls:
+```sql
+SELECT SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML(
+  'your_semantic_view',
+  '<semantic_model_yaml>',
+  verify_only => TRUE
+);
+```
+
+Response:
+```json
+{
+  "verified": true,
+  "errors": [],
+  "warnings": []
+}
+```
+
+#### Step 4: Deploy to Snowflake
+
+Deploy the verified semantic view:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/snowflake/deploy" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "semantic_model_yaml": "...",
+    "view_name": "my_semantic_view",
+    "workspace_id": "standard"
+  }'
+```
+
+This creates the semantic view in Snowflake:
+```sql
+SELECT SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML(
+  'my_semantic_view',
+  '<semantic_model_yaml>'
+);
+```
+
+#### Step 5: Run Cortex Analyst Regression Tests
+
+Test the semantic view with Cortex Analyst:
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/snowflake/test-cortex" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "view_name": "my_semantic_view",
+    "test_queries": [
+      "What are the top 10 customers by order value?",
+      "Show me customers who haven't placed orders in the last 30 days"
+    ],
+    "workspace_id": "standard"
+  }'
+```
+
+Response:
+```json
+{
+  "tests_passed": 2,
+  "tests_failed": 0,
+  "results": [
+    {
+      "query": "What are the top 10 customers by order value?",
+      "status": "passed",
+      "response": "...",
+      "latency_ms": 1234
+    }
+  ]
+}
+```
+
+### Complete Workflow Example
+
+```bash
+# 1. Generate ODL from domain description
+ODL=$(curl -X POST "http://localhost:8000/api/v1/odl/generate" \
+  -H "Content-Type: application/json" \
+  -d '{"domain_description": "E-commerce with customers and orders"}' \
+  | jq -r '.odl')
+
+# 2. Compile to Snowflake semantic model
+YAML=$(curl -X POST "http://localhost:8000/api/v1/snowflake/compile" \
+  -H "Content-Type: application/json" \
+  -d "{\"odl\": \"$ODL\"}" \
+  | jq -r '.semantic_model_yaml')
+
+# 3. Verify
+VERIFY_RESULT=$(curl -X POST "http://localhost:8000/api/v1/snowflake/verify" \
+  -H "Content-Type: application/json" \
+  -d "{\"semantic_model_yaml\": \"$YAML\"}")
+
+if [ "$(echo $VERIFY_RESULT | jq -r '.verified')" == "true" ]; then
+  # 4. Deploy
+  curl -X POST "http://localhost:8000/api/v1/snowflake/deploy" \
+    -H "Content-Type: application/json" \
+    -d "{\"semantic_model_yaml\": \"$YAML\", \"view_name\": \"ecommerce_semantic\"}"
+  
+  # 5. Test with Cortex Analyst
+  curl -X POST "http://localhost:8000/api/v1/snowflake/test-cortex" \
+    -H "Content-Type: application/json" \
+    -d '{"view_name": "ecommerce_semantic", "test_queries": ["List all customers"]}'
+fi
+```
+
+## Architecture
+
+### System Architecture Diagram
+
+```mermaid
+graph TB
+    subgraph ClientLayer["Client Layer"]
+        WebUI["Web UI<br/>(Next.js)"]
+        CLI["CLI<br/>(sundaygraph)"]
+        CICD["CI/CD<br/>(GitHub Actions)"]
+        External["External Services"]
+    end
+
+    subgraph APILayer["FastAPI API Layer"]
+        API["REST API Endpoints<br/>• Workspaces<br/>• Files<br/>• ODL Operations<br/>• Snowflake Operations<br/>• Task Status"]
+    end
+
+    subgraph Orchestration["Core Orchestration Layer<br/>(SemanticOps Engine)"]
+        SundayGraph["SundayGraph<br/>• Workspace Management<br/>• Agent Coordination<br/>• Task Queue Integration<br/>• Configuration"]
+    end
+
+    subgraph ODLModule["ODL Processing Module"]
+        ODLLoader["ODL Loader"]
+        ODLValidator["ODL Validator"]
+        ODLNormalizer["ODL Normalizer"]
+        ODLDiff["ODL Diff Engine"]
+        ODLEvaluator["ODL Evaluator"]
+        ODLStore["ODL Store<br/>(PostgreSQL)"]
+    end
+
+    subgraph SnowflakeModule["Snowflake Integration Module"]
+        Compiler["Snowflake Compiler"]
+        Verifier["Snowflake Verifier"]
+        Deployer["Snowflake Deployer"]
+        Export["Snowflake Export"]
+        DriftDet["Drift Detector"]
+        Promotion["Promotion Bundle"]
+        Cortex["Cortex Analyst Client"]
+    end
+
+    subgraph DataModule["Data Ingestion Module"]
+        DataLoader["Data Loader"]
+        Processor["Data Processor"]
+        Extractor["Data Extractor"]
+        SchemaInf["Schema Inference Agent"]
+        ExtractionExec["Extraction Executor"]
+    end
+
+    subgraph LLMService["LLM Service"]
+        LLM["LLM Service<br/>• OpenAI / Anthropic<br/>• Code Generation<br/>• Schema Inference<br/>• ODL Generation"]
+    end
+
+    subgraph Storage["Storage Layer"]
+        PostgreSQL["PostgreSQL Database<br/>• Workspaces<br/>• Ontologies<br/>• Versions<br/>• Compile Runs<br/>• Eval Runs<br/>• Drift Events<br/>• Cortex Runs"]
+        SnowflakeDB["Snowflake Database<br/>• Semantic Views<br/>• Cortex Analyst<br/>• Tables"]
+        TaskQueue["Task Queue<br/>• Celery / Temporal<br/>• Redis"]
+    end
+
+    subgraph OptionalGraph["Optional: Graph Storage"]
+        Oxigraph["Oxigraph<br/>(SPARQL)"]
+        NetworkX["NetworkX<br/>(Memory)"]
+    end
+
+    WebUI -->|HTTP/REST| API
+    CLI -->|HTTP/REST| API
+    CICD -->|HTTP/REST| API
+    External -->|HTTP/REST| API
+
+    API --> SundayGraph
+
+    SundayGraph --> ODLModule
+    SundayGraph --> SnowflakeModule
+    SundayGraph --> DataModule
+
+    ODLModule --> LLMService
+    SnowflakeModule --> LLMService
+    DataModule --> LLMService
+
+    ODLModule --> PostgreSQL
+    SnowflakeModule --> SnowflakeDB
+    SundayGraph --> TaskQueue
+
+    ODLModule -.->|Optional| OptionalGraph
+    DataModule -.->|Optional| OptionalGraph
+
+    style ClientLayer fill:#e1f5ff
+    style APILayer fill:#fff4e1
+    style Orchestration fill:#ffe1f5
+    style ODLModule fill:#e1ffe1
+    style SnowflakeModule fill:#ffe1e1
+    style DataModule fill:#f5e1ff
+    style LLMService fill:#ffffe1
+    style Storage fill:#e1e1ff
+    style OptionalGraph fill:#f0f0f0,stroke-dasharray: 5 5
+```
+
+### Complete Workflow Diagram: ODL → Snowflake Semantic View
+
+```mermaid
+flowchart TD
+    Start([Input Sources<br/>• Domain Description<br/>• Data Files<br/>• Existing ODL])
+    
+    Step1[STEP 1: ODL Generation & Validation<br/>ODL Generator Agent<br/>• Analyze domain/data samples<br/>• Use LLM to generate ODL JSON<br/>• Validate against ODL Schema<br/>• Normalize to ODL IR<br/>• Store in PostgreSQL]
+    
+    Step2[STEP 2: ODL Evaluation & Diff Analysis<br/>ODL Evaluator<br/>• Structural gates<br/>• Semantic gates<br/>• Deployability gates<br/>• Threshold profiles<br/><br/>ODL Diff Engine<br/>• Compare versions<br/>• Detect breaking changes<br/>• Detect non-breaking changes<br/>• Store diff in database]
+    
+    Step3[STEP 3: Snowflake Compilation<br/>Snowflake Compiler<br/>• Parse ODL IR<br/>• Map objects → logical tables<br/>• Map relationships → join paths<br/>• Map metrics → facts/metrics<br/>• Map dimensions → dimensions<br/>• Generate semantic_model.yaml<br/>• Generate verify.sql<br/>• Generate deploy.sql<br/>• Generate rollback.sql<br/>• Create ArtifactBundle<br/>• Store compile_run]
+    
+    Step4[STEP 4: Snowflake Verification<br/>Snowflake Verifier<br/>• Connect to Snowflake<br/>• Execute verify.sql<br/>• CALL SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML<br/>  with verify_only => TRUE<br/>• Check errors/warnings<br/>• Return verification results]
+    
+    Step5[STEP 5: Deployment<br/>Snowflake Deployer<br/>• Export current view YAML for rollback<br/>• Execute deploy.sql<br/>• CALL SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML<br/>  with verify_only => FALSE<br/>• Create semantic view<br/>• Store deployment metadata]
+    
+    Step6[STEP 6: Cortex Analyst Regression Testing<br/>Cortex Analyst Regression Runner<br/>• Load golden_questions.yaml<br/>• For each question:<br/>  - Call Cortex Analyst REST API<br/>  - Validate SQL patterns<br/>  - Validate answer snippets<br/>  - Measure latency<br/>• Store results in database<br/>• Generate junit.xml<br/>• Return pass/fail status]
+    
+    Step7[STEP 7: Drift Detection<br/>Continuous Monitoring<br/>Drift Detector<br/>• Mapping Drift:<br/>  - Compare ODL vs information_schema<br/>  - Detect column renames/drops/adds<br/>• Semantic View Drift:<br/>  - Compare generated vs live YAML<br/>  - Detect manual edits<br/>  - Detect divergence<br/>• Create drift_event records<br/>• Alert on breaking changes]
+    
+    Start --> Step1
+    Step1 --> Step2
+    Step2 --> Step3
+    Step3 --> Step4
+    Step4 -->|Verified| Step5
+    Step4 -->|Failed| Step3
+    Step5 --> Step6
+    Step6 --> Step7
+    Step7 -.->|Continuous| Step7
+    
+    style Start fill:#e1f5ff
+    style Step1 fill:#e1ffe1
+    style Step2 fill:#fff4e1
+    style Step3 fill:#ffe1f5
+    style Step4 fill:#ffffe1
+    style Step5 fill:#e1e1ff
+    style Step6 fill:#ffe1e1
+    style Step7 fill:#f0f0f0
+```
+
+### Data Flow Diagram
+
+```mermaid
+flowchart TB
+    subgraph InputDataFlow["Input Data Flow"]
+        CSV[CSV Files]
+        JSON[JSON Files]
+        PDF[PDF Files]
+        Text[Text Files]
+        
+        DataLoader[Data Loader<br/>Multi-format]
+        SchemaInf[Schema Inference Agent<br/>CodeAct Approach<br/>• Analyze sample<br/>• Generate code]
+        ExtractionExec[Extraction Executor<br/>• Execute code<br/>• Extract entities<br/>• Extract relations]
+        ODLGen[ODL Generator<br/>• Build ontology<br/>• Generate ODL JSON]
+        PGStore1[PostgreSQL Store<br/>• ontology_version<br/>• ODL JSON payload]
+        
+        CSV --> DataLoader
+        JSON --> DataLoader
+        PDF --> DataLoader
+        Text --> DataLoader
+        DataLoader --> SchemaInf
+        SchemaInf --> ExtractionExec
+        ExtractionExec --> ODLGen
+        ODLGen --> PGStore1
+    end
+    
+    subgraph ODLProcessingFlow["ODL Processing Flow"]
+        ODLFile[ODL JSON File<br/>User-provided]
+        ODLLoad[ODL Loader<br/>• Load JSON]
+        ODLVal[ODL Validator<br/>• Schema validation<br/>• Business rules]
+        ODLNorm[ODL Normalizer<br/>• Sort lists<br/>• Canonical names]
+        ODLIR[ODL IR<br/>Stable format]
+        SnowflakeComp[Snowflake Compiler<br/>• ODL IR → YAML<br/>• Generate SQL files]
+        ArtifactBundle[ArtifactBundle<br/>• semantic_model.yaml<br/>• verify.sql<br/>• deploy.sql<br/>• rollback.sql]
+        SnowflakeDB[Snowflake Database<br/>• Semantic View]
+        
+        ODLFile --> ODLLoad
+        ODLLoad --> ODLVal
+        ODLLoad --> ODLNorm
+        ODLVal --> ODLIR
+        ODLNorm --> ODLIR
+        ODLIR --> SnowflakeComp
+        SnowflakeComp --> ArtifactBundle
+        ArtifactBundle --> SnowflakeDB
+    end
+    
+    subgraph TaskQueueFlow["Task Queue Flow (Async Processing)"]
+        APIReq[API Request<br/>Long-running]
+        TaskQueue[Task Queue<br/>Celery/Temporal<br/>• Enqueue task<br/>• Return task_id]
+        Worker[Worker Process<br/>• Process ODL<br/>• Compile<br/>• Deploy]
+        TaskStatus[Task Status API<br/>• PENDING<br/>• IN_PROGRESS<br/>• COMPLETED<br/>• FAILED]
+        
+        APIReq --> TaskQueue
+        TaskQueue --> Worker
+        Worker --> TaskStatus
+    end
+    
+    style InputDataFlow fill:#e1f5ff
+    style ODLProcessingFlow fill:#e1ffe1
+    style TaskQueueFlow fill:#fff4e1
+```
 
 ## API Usage
 
@@ -502,171 +482,124 @@ Microservices are beneficial when:
 
 Visit http://localhost:8000/docs for interactive API documentation.
 
-### Example: Build Schema from Domain
+### ODL Generation
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/ontology/build" \
+# Generate ODL from domain description
+curl -X POST "http://localhost:8000/api/v1/odl/generate" \
   -H "Content-Type: application/json" \
   -d '{
-    "domain_description": "A knowledge graph for a software company with employees, projects, and technologies"
+    "domain_description": "E-commerce system with customers, orders, products, and payments"
+  }'
+
+# Generate ODL from data files
+curl -X POST "http://localhost:8000/api/v1/workspaces/standard/build-ontology?username=admin" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "filenames": ["customers.csv", "orders.csv"]
   }'
 ```
 
-### Example: Ingest Data with LLM Reasoning
+### Snowflake Operations
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/ingest" \
+# Compile ODL to Snowflake semantic model YAML
+curl -X POST "http://localhost:8000/api/v1/snowflake/compile" \
   -H "Content-Type: application/json" \
   -d '{
-    "input_path": "data/input"
+    "odl_file": "my_domain.odl",
+    "workspace_id": "standard"
+  }'
+
+# Verify semantic model
+curl -X POST "http://localhost:8000/api/v1/snowflake/verify" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "semantic_model_yaml": "...",
+    "workspace_id": "standard"
+  }'
+
+# Deploy semantic view
+curl -X POST "http://localhost:8000/api/v1/snowflake/deploy" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "semantic_model_yaml": "...",
+    "view_name": "my_semantic_view",
+    "workspace_id": "standard"
+  }'
+
+# Test with Cortex Analyst
+curl -X POST "http://localhost:8000/api/v1/snowflake/test-cortex" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "view_name": "my_semantic_view",
+    "test_queries": [
+      "What are the top customers?",
+      "Show me recent orders"
+    ],
+    "workspace_id": "standard"
   }'
 ```
 
-### Example: Evolve Schema
+## Optional: Graph Storage
 
-```bash
-curl -X POST "http://localhost:8000/api/v1/ontology/evolve" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "data_sample": {"type": "Skill", "name": "Python", "level": "expert"},
-    "feedback": "Need to add Skill entity type"
-  }'
+Graph storage (Oxigraph/NetworkX) is **optional** and not required for Snowflake semantic views. It can be used for:
+
+- **Exploration**: Visualizing relationships before deploying to Snowflake
+- **Development**: Testing ontology schemas locally
+- **Analysis**: Graph-based queries and path finding
+
+To enable graph storage:
+
+```yaml
+# config/config.yaml
+graph:
+  backend: "oxigraph"  # or "memory" for in-memory
+  oxigraph:
+    sparql_endpoint: "http://oxigraph:7878/query"
+    update_endpoint: "http://oxigraph:7878/update"
 ```
 
-The system will automatically use LLM reasoning to:
-- Extract entities intelligently
-- Map properties to ontology
-- Discover relations
-- Validate semantic correctness
+**Note**: Graph storage is not part of the Quickstart and is not required for Snowflake semantic view deployment.
 
 ## Project Structure
 
-### Core Source Files
-
 ```
 sundaygraph/
-├── src/                          # Main source code
+├── src/
 │   ├── api/                      # FastAPI REST API
-│   │   ├── app.py               # API endpoints and routes
-│   │   └── main.py              # API entry point
-│   │
 │   ├── agents/                   # Agentic components
-│   │   ├── base_agent.py        # Base agent class
-│   │   ├── data_ingestion_agent.py    # Data loading & processing
-│   │   ├── ontology_agent.py          # Schema validation & LLM reasoning
-│   │   ├── graph_construction_agent.py # Graph building
-│   │   └── query_agent.py             # Graph queries
-│   │
+│   │   ├── odl_generator_agent.py    # ODL generation
+│   │   ├── snowflake_compiler_agent.py  # Snowflake compilation
+│   │   ├── snowflake_verifier_agent.py  # Semantic model verification
+│   │   ├── snowflake_deployer_agent.py  # Deployment
+│   │   └── cortex_analyst_tester_agent.py  # Cortex Analyst testing
 │   ├── core/                     # Core orchestration
-│   │   ├── config.py             # Configuration management (Pydantic)
-│   │   └── sundaygraph.py        # Main orchestrator class
-│   │
 │   ├── data/                     # Data processing
-│   │   ├── data_processor.py     # Chunking, metadata extraction
-│   │   └── loaders.py            # File format loaders (JSON, CSV, etc.)
-│   │
-│   ├── graph/                     # Graph storage abstraction
-│   │   ├── graph_store.py        # GraphStore interface & MemoryGraphStore
-│   │   └── oxigraph_store.py     # OxigraphGraphStore (SPARQL/RDF)
-│   │
+│   ├── graph/                     # Graph storage (OPTIONAL)
 │   ├── ontology/                  # Ontology management
-│   │   ├── ontology_manager.py   # Schema loading & validation
-│   │   ├── schema_builder.py     # LLM-powered schema generation
-│   │   └── schema.py             # Schema data models
-│   │
+│   ├── snowflake/                 # Snowflake integration
+│   │   ├── connection.py          # Snowflake connection
+│   │   ├── compiler.py            # ODL → YAML compiler
+│   │   ├── verifier.py             # Semantic model verification
+│   │   └── deployer.py             # Semantic view deployment
 │   ├── storage/                   # PostgreSQL schema storage
-│   │   └── schema_store.py        # Schema versioning & persistence
-│   │
+│   ├── tasks/                     # Task queue (async processing)
 │   └── utils/                     # Utilities
-│       ├── llm_service.py         # OpenAI/LLM integration
-│       └── nlp_utils.py          # NLP helpers
-│
-├── config/                        # Configuration files
-│   ├── config.yaml                # Main configuration
-│   └── ontology_schema.yaml       # Default ontology schema
-│
-├── frontend/                      # Next.js frontend
-│   ├── app/                       # Next.js app directory (pages)
-│   │   ├── page.tsx              # Dashboard
-│   │   ├── workspaces/           # Workspace pages
-│   │   ├── graph/                # Graph visualization
-│   │   ├── ontology/             # Ontology view
-│   │   ├── files/                # Files view
-│   │   └── agents/               # Agents view
-│   ├── components/                # React components
-│   │   ├── sidebar.tsx           # Navigation sidebar
-│   │   ├── file-preview.tsx      # File preview (CSV, JSON, PDF)
-│   │   └── ui/                   # shadcn/ui components
-│   └── lib/                       # API client
-│
-├── tests/                         # Test suite
-│   ├── test_agents.py
-│   ├── test_graph_store.py
-│   └── test_ontology.py
-│
-├── data/                          # Data directories (persisted in Docker)
-│   ├── input/                     # Input data files
-│   ├── output/                    # Output files
-│   ├── cache/                     # Cache directory
-│   ├── seed/                      # Seed data for testing
-│   └── workspaces/                # Workspace-specific data
-│
-├── config/                        # Configuration files
-│   ├── config.yaml                # Main configuration
-│   └── ontology_schema.yaml      # Default ontology schema
-│
-├── docs/                          # Documentation
-│   ├── ARCHITECTURE.md            # Architecture details
-│   ├── DESIGN_DECISIONS.md        # Design rationale
-│   ├── MICROSERVICES.md           # Microservices analysis
-│   └── USAGE.md                   # Usage guide
-│
-├── docker-compose.yml             # Docker Compose setup
-├── Dockerfile                     # Backend Docker image
-├── pyproject.toml                 # Python dependencies
-├── run_local.py                   # Local development server script
-├── ingest_seed_data.py            # Seed data ingestion script
-└── README.md                      # This file
+├── config/
+│   └── config.yaml                # Main configuration
+└── README.md                       # This file
 ```
 
-### File Relevance Guide
-
-**Essential Files (Core Functionality):**
-- `src/core/sundaygraph.py` - Main orchestrator
-- `src/core/config.py` - Configuration management
-- `src/agents/*.py` - All agent implementations
-- `src/graph/graph_store.py` - Graph storage abstraction
-- `src/ontology/*.py` - Ontology management
-- `src/api/app.py` - API endpoints
-- `config/config.yaml` - Main configuration
-
-**Important Files (Key Features):**
-- `src/utils/llm_service.py` - LLM integration (required for schema building)
-- `src/utils/llm_cost_optimizer.py` - LLM cost optimization (caching, token tracking)
-- `src/storage/schema_store.py` - PostgreSQL schema storage (optional)
-- `src/ontology/evaluation_metrics.py` - Ontology quality evaluation
-- `src/data/*.py` - Data processing (required for ingestion)
-
-**Supporting Files:**
-- `run_local.py` - Development server script
-- `ingest_seed_data.py` - Seed data ingestion utility
-- `docker-compose.yml` - Docker setup
-- `pyproject.toml` - Dependencies
-
-**Documentation:**
-- `README.md` - Main documentation (this file)
-- `docs/*.md` - Detailed documentation
-
-**Files to Ignore (Generated/Runtime):**
-- `__pycache__/` - Python bytecode (should be in .gitignore)
-- `venv/` - Virtual environment (should be in .gitignore)
-- `logs/` - Runtime logs (should be in .gitignore)
-- `*.pyc` - Compiled Python files
-
-**Optional/Utility Files:**
-- `frontend/` - Web UI (optional, can run API-only)
-
 ## Development
+
+### Running Locally
+
+```bash
+# Start API server
+python run_local.py
+# Or: python -m uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+```
 
 ### Running Tests
 
@@ -674,48 +607,6 @@ sundaygraph/
 uv run pytest
 ```
 
-### Code Formatting
-
-```bash
-uv run black src/ tests/
-uv run ruff check src/ tests/
-```
-
 ## License
 
 MIT License
-
-## Key Features
-
-### Workspace-Based Multi-Tenancy
-- Each workspace has isolated data and graph namespace
-- User-specific access control (default: "admin")
-- Workspace-scoped file management and graph queries
-
-### File Management
-- Upload files (CSV, JSON, PDF, TXT, XML, DOCX) to workspaces
-- Preview files with type-specific viewers (CSV tables, JSON editor, PDF viewer)
-- Ingest files to build knowledge graph
-- Build ontology schema from uploaded files
-
-### Graph Visualization
-- View workspace-specific graph nodes (entities) and edges (relations)
-- Filter by entity type or relation type
-- Graph statistics and storage information
-
-### LLM Cost Optimization
-- Response caching to reduce API calls
-- Smart model selection (gpt-4o-mini for simple tasks)
-- Token tracking and cost statistics
-
-### Ontology Evaluation
-- Quality metrics: completeness, consistency, coherence, coverage, structure
-- Automatic evaluation during schema building
-- API endpoint for manual evaluation
-
-## Documentation
-
-- [Usage Guide](docs/USAGE.md)
-- [Architecture Documentation](docs/ARCHITECTURE.md)
-- [Microservices Analysis](docs/MICROSERVICES.md)
-- [Design Decisions](docs/DESIGN_DECISIONS.md)

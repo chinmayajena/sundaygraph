@@ -1,0 +1,14 @@
+{
+  "environments": {
+    "dev": {
+      "database": "DEV_DB",
+      "schema": "PUBLIC",
+      "view_name": "dev_semantic_view"
+    },
+    "prod": {
+      "database": "PROD_DB",
+      "schema": "PUBLIC",
+      "view_name": "prod_semantic_view"
+    }
+  }
+}

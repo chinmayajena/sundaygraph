@@ -1,0 +1,330 @@
+{
+  "version": "1.0.0",
+  "name": "Retail E-Commerce Semantic Model",
+  "description": "Semantic model for retail e-commerce domain with customers, orders, products, and sales metrics",
+  "objects": [
+    {
+      "name": "Customer",
+      "description": "Customer entity representing end users who place orders",
+      "identifiers": ["customer_id"],
+      "properties": [
+        {
+          "name": "customer_id",
+          "type": "string",
+          "description": "Unique identifier for the customer",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "description": "Full name of the customer",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "description": "Email address of the customer",
+          "nullable": true,
+          "required": false
+        },
+        {
+          "name": "phone",
+          "type": "string",
+          "description": "Phone number of the customer",
+          "nullable": true,
+          "required": false
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp",
+          "description": "Timestamp when the customer record was created",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "description": "Customer status (active, inactive, suspended)",
+          "nullable": false,
+          "required": true
+        }
+      ],
+      "snowflake": {
+        "table": "customers"
+      }
+    },
+    {
+      "name": "Order",
+      "description": "Order entity representing customer purchases",
+      "identifiers": ["order_id"],
+      "properties": [
+        {
+          "name": "order_id",
+          "type": "string",
+          "description": "Unique identifier for the order",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "customer_id",
+          "type": "string",
+          "description": "Foreign key to Customer",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "order_date",
+          "type": "date",
+          "description": "Date when the order was placed",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "order_timestamp",
+          "type": "timestamp",
+          "description": "Timestamp when the order was placed",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "status",
+          "type": "string",
+          "description": "Order status (pending, processing, shipped, delivered, cancelled)",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "shipping_address",
+          "type": "string",
+          "description": "Shipping address for the order",
+          "nullable": true,
+          "required": false
+        }
+      ],
+      "snowflake": {
+        "table": "orders"
+      }
+    },
+    {
+      "name": "Product",
+      "description": "Product entity representing items available for purchase",
+      "identifiers": ["product_id"],
+      "properties": [
+        {
+          "name": "product_id",
+          "type": "string",
+          "description": "Unique identifier for the product",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "description": "Name of the product",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "description",
+          "type": "string",
+          "description": "Detailed description of the product",
+          "nullable": true,
+          "required": false
+        },
+        {
+          "name": "category",
+          "type": "string",
+          "description": "Product category",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "price",
+          "type": "decimal",
+          "description": "Current price of the product",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "cost",
+          "type": "decimal",
+          "description": "Cost of the product",
+          "nullable": true,
+          "required": false
+        },
+        {
+          "name": "stock_quantity",
+          "type": "integer",
+          "description": "Current stock quantity",
+          "nullable": false,
+          "required": true
+        }
+      ],
+      "snowflake": {
+        "table": "products"
+      }
+    },
+    {
+      "name": "OrderItem",
+      "description": "Order line item representing a product in an order",
+      "identifiers": ["order_item_id"],
+      "properties": [
+        {
+          "name": "order_item_id",
+          "type": "string",
+          "description": "Unique identifier for the order item",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "order_id",
+          "type": "string",
+          "description": "Foreign key to Order",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "product_id",
+          "type": "string",
+          "description": "Foreign key to Product",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "quantity",
+          "type": "integer",
+          "description": "Quantity of the product ordered",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "unit_price",
+          "type": "decimal",
+          "description": "Unit price at the time of order",
+          "nullable": false,
+          "required": true
+        },
+        {
+          "name": "discount",
+          "type": "decimal",
+          "description": "Discount amount applied to this line item",
+          "nullable": true,
+          "required": false
+        }
+      ],
+      "snowflake": {
+        "table": "order_items"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "name": "placed_by",
+      "description": "Relationship from Order to Customer indicating which customer placed the order",
+      "from": "Order",
+      "to": "Customer",
+      "joinKeys": [
+        ["customer_id", "customer_id"]
+      ],
+      "cardinality": "many_to_one"
+    },
+    {
+      "name": "contains",
+      "description": "Relationship from Order to OrderItem indicating items in the order",
+      "from": "OrderItem",
+      "to": "Order",
+      "joinKeys": [
+        ["order_id", "order_id"]
+      ],
+      "cardinality": "many_to_one"
+    },
+    {
+      "name": "includes",
+      "description": "Relationship from OrderItem to Product indicating which product is in the order item",
+      "from": "OrderItem",
+      "to": "Product",
+      "joinKeys": [
+        ["product_id", "product_id"]
+      ],
+      "cardinality": "many_to_one"
+    }
+  ],
+  "metrics": [
+    {
+      "name": "TotalRevenue",
+      "description": "Total revenue from all orders (sum of order item amounts after discount)",
+      "expression": "SUM(OrderItem.quantity * (OrderItem.unit_price - COALESCE(OrderItem.discount, 0)))",
+      "grain": ["Order"],
+      "type": "sum",
+      "format": "$#,##0.00"
+    },
+    {
+      "name": "OrderCount",
+      "description": "Total number of orders",
+      "expression": "COUNT(DISTINCT Order.order_id)",
+      "grain": ["Order"],
+      "type": "count"
+    },
+    {
+      "name": "AverageOrderValue",
+      "description": "Average value per order",
+      "expression": "SUM(OrderItem.quantity * (OrderItem.unit_price - COALESCE(OrderItem.discount, 0))) / COUNT(DISTINCT Order.order_id)",
+      "grain": ["Order"],
+      "type": "average",
+      "format": "$#,##0.00"
+    },
+    {
+      "name": "TotalItemsSold",
+      "description": "Total quantity of items sold across all orders",
+      "expression": "SUM(OrderItem.quantity)",
+      "grain": ["OrderItem"],
+      "type": "sum"
+    },
+    {
+      "name": "UniqueCustomers",
+      "description": "Count of unique customers who have placed orders",
+      "expression": "COUNT(DISTINCT Order.customer_id)",
+      "grain": ["Order"],
+      "type": "distinct_count"
+    }
+  ],
+  "dimensions": [
+    {
+      "name": "CustomerName",
+      "description": "Customer name dimension",
+      "sourceProperty": "Customer.name",
+      "type": "categorical"
+    },
+    {
+      "name": "OrderDate",
+      "description": "Order date dimension for time-based analysis",
+      "sourceProperty": "Order.order_date",
+      "type": "temporal"
+    },
+    {
+      "name": "ProductCategory",
+      "description": "Product category dimension",
+      "sourceProperty": "Product.category",
+      "type": "categorical"
+    },
+    {
+      "name": "OrderStatus",
+      "description": "Order status dimension",
+      "sourceProperty": "Order.status",
+      "type": "categorical"
+    }
+  ],
+  "snowflake": {
+    "database": "RETAIL_DB",
+    "schema": "PUBLIC",
+    "warehouse": "COMPUTE_WH",
+    "tableMappings": {
+      "Customer": "customers",
+      "Order": "orders",
+      "Product": "products",
+      "OrderItem": "order_items"
+    }
+  }
+}

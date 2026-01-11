@@ -19,16 +19,13 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual environments
+# Virtual Environment
 venv/
 env/
 ENV/
 .venv
-
-# UV
-.venv/
-uv.lock
 
 # IDE
 .vscode/
@@ -36,6 +33,12 @@ uv.lock
 *.swp
 *.swo
 *~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
 
 # Logs
 logs/
@@ -43,28 +46,37 @@ logs/
 
 # Data
 data/
-*.pkl
 *.db
 *.sqlite
 
-# Environment variables
-.env
-.env.local
-.env.*.local
-
-# Configuration (if contains secrets)
-config/local.yaml
-config/secrets.yaml
-
-# Testing
-.pytest_cache/
+# Test coverage
 .coverage
 htmlcov/
+.pytest_cache/
 .tox/
 
-# OS
-.DS_Store
-Thumbs.db
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
 
-# Neo4j
-neo4j/
+# Node (frontend)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env*.local
+
+# Docker
+*.pid
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+promotion-bundle.zip
+test-results.xml
+junit.xml
+
+# OS
+Thumbs.db
+.DS_Store

@@ -1,0 +1,20 @@
+# Golden file snapshot for verify.sql
+# Generated from: odl/examples/snowflake_retail.odl.json
+# Key sections to verify:
+
+## Must contain:
+- CALL SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML
+- RETAIL_DB.PUBLIC (database.schema)
+- $$ delimiters for YAML
+- verify_only => TRUE
+
+## Must NOT contain:
+- verify_only => FALSE
+- view name in CALL statement (only database.schema)
+
+## Expected structure:
+CALL SYSTEM$CREATE_SEMANTIC_VIEW_FROM_YAML(
+  'RETAIL_DB.PUBLIC',
+  $$<yaml_content>$$,
+  verify_only => TRUE
+);

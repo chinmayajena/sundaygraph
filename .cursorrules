@@ -1,0 +1,286 @@
+# SundayGraph Project Rules for Cursor IDE
+
+## Project Overview
+SundayGraph is an agentic AI system that transforms structured/unstructured data into ontology-backed knowledge graphs using LLM-powered code generation (CodeAct approach).
+
+## Technology Stack
+- **Backend**: Python 3.10+, FastAPI, Pydantic
+- **Frontend**: Next.js, TypeScript, Tailwind CSS, shadcn/ui
+- **Graph DB**: Oxigraph (SPARQL/RDF), NetworkX (memory)
+- **Database**: PostgreSQL (schema storage)
+- **Task Queue**: Celery (Redis) or Temporal (optional)
+- **LLM**: OpenAI (primary), Anthropic (optional)
+- **Package Manager**: UV (preferred) or pip
+
+## Architecture Principles
+
+### 1. Agentic Design
+- All processing logic in agents (`src/agents/`)
+- Agents inherit from `BaseAgent`
+- Each agent has single responsibility
+- Agents use async/await for concurrent operations
+
+### 2. Abstraction Layers
+- Graph storage: `GraphStore` interface (Memory/Oxigraph implementations)
+- Task queue: `TaskQueue` interface (Celery/Temporal implementations)
+- Data loaders: `DataLoader` interface (JSON/CSV/PDF/etc implementations)
+
+### 3. CodeAct Extraction Pattern
+- **NEVER** call LLM per row in data processing
+- **ALWAYS** use schema inference: analyze sample → generate code → execute
+- Use `SchemaInferenceAgent` for code generation
+- Use `ExtractionExecutor` for code execution
+- Validate generated code with `CodeExecutor` (AST validation)
+
+### 4. Workspace Isolation
+- All graph operations must accept `workspace_id` parameter
+- Graph stores use workspace-specific namespaces
+- File operations scoped to workspace directories
+
+## Code Style & Conventions
+
+### Python
+- **Type Hints**: Always use type hints for function parameters and returns
+- **Async/Await**: Use async for I/O operations (LLM calls, database, file operations)
+- **Error Handling**: Use try/except with specific exceptions, log with loguru
+- **Imports**: Group imports: stdlib, third-party, local
+- **Docstrings**: Use Google-style docstrings for public methods
+- **Naming**: 
+  - Classes: PascalCase (`SundayGraph`, `GraphStore`)
+  - Functions/Methods: snake_case (`ingest_data`, `get_status`)
+  - Constants: UPPER_SNAKE_CASE (`MAX_RETRIES`)
+
+### TypeScript/React
+- **Components**: Use functional components with TypeScript
+- **Hooks**: Use React hooks (useState, useEffect, etc.)
+- **API Calls**: Use `apiClient` from `lib/api.ts`
+- **Styling**: Use Tailwind CSS classes, shadcn/ui components
+- **File Naming**: kebab-case for files (`file-preview.tsx`)
+
+## File Organization
+
+### Backend Structure
+```
+src/
+├── agents/          # Agentic components (single responsibility)
+├── api/             # FastAPI endpoints
+├── core/            # Core orchestration (SundayGraph, Config)
+├── data/            # Data processing (loaders, processors, executors)
+├── graph/           # Graph storage abstraction
+├── ontology/        # Ontology management
+├── storage/         # PostgreSQL storage
+├── tasks/           # Task queue implementations
+└── utils/           # Utilities (LLM, code execution, NLP)
+```
+
+### Frontend Structure
+```
+frontend/
+├── app/             # Next.js app directory (pages)
+├── components/      # React components
+├── lib/             # Utilities and API client
+└── public/          # Static assets
+```
+
+## Key Patterns
+
+### 1. LLM Usage Pattern
+```python
+# ✅ CORRECT: Use schema inference (one call)
+extraction_code = await schema_inference_agent.generate_extraction_code(sample)
+executor = ExtractionExecutor(code=extraction_code)
+entities, relations = executor.extract_from_batch(all_rows)
+
+# ❌ WRONG: Per-row LLM calls
+for row in rows:
+    entity = await llm.validate_entity(row)  # Don't do this!
+```
+
+### 2. Graph Store Pattern
+```python
+# ✅ CORRECT: Always pass workspace_id
+graph_store.add_entity(entity_type, entity_id, properties, workspace_id=workspace_id)
+graph_store.query_entities(workspace_id=workspace_id, entity_type="Customer")
+
+# ❌ WRONG: Missing workspace_id
+graph_store.add_entity(entity_type, entity_id, properties)  # Don't do this!
+```
+
+### 3. Configuration Pattern
+```python
+# ✅ CORRECT: Use Config class
+config = Config.from_yaml("config/config.yaml")
+sg = SundayGraph(config=config)
+
+# ❌ WRONG: Hardcoded values
+sparql_endpoint = "http://localhost:7878"  # Don't do this!
+```
+
+### 4. Error Handling Pattern
+```python
+# ✅ CORRECT: Specific exceptions, logging
+try:
+    result = await llm_service.think(prompt)
+except requests.exceptions.ConnectionError as e:
+    logger.error(f"LLM connection failed: {e}")
+    return None
+except Exception as e:
+    logger.error(f"Unexpected error: {e}")
+    raise
+```
+
+### 5. Task Queue Pattern
+```python
+# ✅ CORRECT: Check if enabled, use async
+task_queue = get_task_queue()
+if task_queue:
+    task_id = await task_queue.enqueue("ingest_data", **kwargs)
+    return {"task_id": task_id}
+else:
+    # Synchronous fallback
+    result = await sg.ingest_data(**kwargs)
+```
+
+## What to Avoid
+
+### ❌ Anti-Patterns
+
+1. **Per-Row LLM Calls**
+   ```python
+   # ❌ DON'T: Call LLM for each row
+   for row in data:
+       await llm.validate(row)
+   ```
+
+2. **Missing Workspace Isolation**
+   ```python
+   # ❌ DON'T: Forget workspace_id
+   graph_store.add_entity(type, id, props)
+   ```
+
+3. **Hardcoded Configuration**
+   ```python
+   # ❌ DON'T: Hardcode values
+   endpoint = "http://localhost:8000"
+   ```
+
+4. **Synchronous Blocking Operations**
+   ```python
+   # ❌ DON'T: Block on I/O
+   result = requests.get(url)  # Use async instead
+   ```
+
+5. **Unsafe Code Execution**
+   ```python
+   # ❌ DON'T: Execute untrusted code without validation
+   exec(user_code)  # Always use CodeExecutor
+   ```
+
+## Testing Guidelines
+
+- Write tests in `tests/` directory
+- Use pytest with async support
+- Test agents in isolation
+- Mock LLM calls in tests
+- Test workspace isolation
+
+## Documentation
+
+- Update README.md for user-facing changes
+- Add docstrings for new functions/classes
+- Update API docs (FastAPI auto-generates)
+- Document breaking changes
+
+## Dependencies
+
+### Required
+- FastAPI, uvicorn
+- Pydantic, pydantic-settings
+- NetworkX (memory graph)
+- sparqlwrapper, rdflib (Oxigraph)
+- loguru (logging)
+- requests (HTTP)
+
+### Optional
+- celery[redis] (task queue)
+- temporalio (Temporal workflow)
+- openai (LLM)
+- psycopg2-binary (PostgreSQL)
+
+## Common Tasks
+
+### Adding a New Agent
+1. Create class in `src/agents/` inheriting from `BaseAgent`
+2. Implement `async def process()` method
+3. Add to `SundayGraph.__init__()`
+4. Add config in `config.yaml`
+5. Export in `src/agents/__init__.py`
+
+### Adding a New Graph Backend
+1. Create class in `src/graph/` implementing `GraphStore`
+2. Implement all abstract methods with `workspace_id` support
+3. Add config in `Config` class
+4. Update `SundayGraph._create_graph_store()`
+
+### Adding a New Data Loader
+1. Create class in `src/data/loaders.py` implementing `DataLoader`
+2. Implement `load()` and `can_load()` methods
+3. Register in `DataLoaderRegistry`
+
+### Adding a New API Endpoint
+1. Add route in `src/api/app.py`
+2. Create Pydantic models for request/response
+3. Add workspace_id parameter if needed
+4. Use task queue if long-running operation
+5. Add to API docs (auto-generated)
+
+## Performance Considerations
+
+- **Batch Operations**: Process data in batches, not one-by-one
+- **Async I/O**: Use async/await for all I/O operations
+- **Caching**: Cache LLM responses when possible
+- **Code Generation**: Generate code once, execute many times
+- **Workspace Isolation**: Use workspace-specific queries for performance
+
+## Security Considerations
+
+- **Code Execution**: Always validate generated code with AST
+- **Input Validation**: Use Pydantic models for API inputs
+- **Workspace Isolation**: Never allow cross-workspace access
+- **API Keys**: Store in environment variables, never in code
+- **SQL Injection**: Use parameterized queries (SQLAlchemy)
+
+## Git Workflow
+
+- **Branch Naming**: `feature/`, `fix/`, `refactor/`
+- **Commits**: Descriptive messages, reference issues
+- **PRs**: Include description, test results, screenshots if UI changes
+
+## When Making Changes
+
+1. **Check Existing Patterns**: Look at similar code in the project
+2. **Maintain Consistency**: Follow existing code style
+3. **Update Tests**: Add/update tests for new features
+4. **Update Docs**: Update README/docs if user-facing
+5. **Workspace Support**: Ensure new features support workspace isolation
+6. **CodeAct First**: Prefer code generation over per-row LLM calls
+
+## Questions to Ask Before Coding
+
+1. Does this need workspace isolation?
+2. Should this use task queue (if long-running)?
+3. Can this use CodeAct instead of per-row LLM calls?
+4. Is this following existing patterns?
+5. Are there tests for this?
+6. Is configuration externalized?
+
+## Quick Reference
+
+- **Main Orchestrator**: `src/core/sundaygraph.py`
+- **API Endpoints**: `src/api/app.py`
+- **Config**: `src/core/config.py`, `config/config.yaml`
+- **Graph Store**: `src/graph/graph_store.py`
+- **LLM Service**: `src/utils/llm_service.py`
+- **Code Execution**: `src/utils/code_executor.py`
+- **Schema Inference**: `src/agents/schema_inference_agent.py`
+- **Extraction**: `src/data/extraction_executor.py`

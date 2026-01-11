@@ -1,0 +1,99 @@
+# Golden file snapshot for semantic_model.yaml
+# Generated from: odl/examples/snowflake_retail.odl.json
+# Key sections to verify:
+
+## semantic_model section
+semantic_model:
+  name: Retail E-Commerce Semantic Model
+  version: 1.0.0
+
+## logical_tables section (should have Customer, Order, Product, OrderItem)
+logical_tables:
+  - name: Customer
+    physical_table:
+      database: RETAIL_DB
+      schema: PUBLIC
+      table: customers
+    primary_key: customer_id
+    dimensions:
+      - name: name
+        type: VARCHAR
+      - name: email
+        type: VARCHAR
+      - name: phone
+        type: VARCHAR
+      - name: created_at
+        type: TIMESTAMP_NTZ
+      - name: status
+        type: VARCHAR
+
+  - name: Order
+    physical_table:
+      database: RETAIL_DB
+      schema: PUBLIC
+      table: orders
+    primary_key: order_id
+
+  - name: Product
+    physical_table:
+      database: RETAIL_DB
+      schema: PUBLIC
+      table: products
+    primary_key: product_id
+
+  - name: OrderItem
+    physical_table:
+      database: RETAIL_DB
+      schema: PUBLIC
+      table: order_items
+    primary_key: order_item_id
+
+## relationships section (should have placed_by)
+relationships:
+  - name: placed_by
+    from_table: Order
+    to_table: Customer
+    join_type: LEFT
+    join_keys:
+      - from_column: customer_id
+        to_column: customer_id
+
+## facts section (should have TotalRevenue, OrderCount, AverageOrderValue)
+facts:
+  - name: TotalRevenue
+    expression: SUM(OrderItem.quantity * (OrderItem.unit_price - COALESCE(OrderItem.discount, 0)))
+    grain:
+      - Order
+    aggregation_type: SUM
+    format: $#,##0.00
+
+  - name: OrderCount
+    expression: COUNT(DISTINCT Order.order_id)
+    grain:
+      - Order
+    aggregation_type: COUNT
+
+  - name: AverageOrderValue
+    expression: SUM(OrderItem.quantity * (OrderItem.unit_price - COALESCE(OrderItem.discount, 0))) / COUNT(DISTINCT Order.order_id)
+    grain:
+      - Order
+    aggregation_type: CUSTOM
+    format: $#,##0.00
+
+## dimensions section (should have CustomerName, OrderDate, ProductCategory, OrderStatus)
+dimensions:
+  - name: CustomerName
+    source_property: Customer.name
+    type: categorical
+
+  - name: OrderDate
+    source_property: Order.order_date
+    type: temporal
+
+  - name: ProductCategory
+    source_property: Product.category
+    type: categorical
+
+  - name: OrderStatus
+    source_property: Order.status
+    type: categorical

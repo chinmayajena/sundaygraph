@@ -1,0 +1,76 @@
+# Cursor IDE ignore patterns
+# Files/directories that Cursor should not index or analyze
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Logs
+logs/
+*.log
+
+# Data directories (may contain large files)
+data/
+*.pkl
+*.db
+*.sqlite
+
+# Environment files (may contain secrets)
+.env
+.env.local
+.env.*.local
+
+# Node modules (frontend)
+node_modules/
+.next/
+out/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Docker volumes
+neo4j/
+oxigraph-data/
+
+# Lock files (too large, not needed for analysis)
+uv.lock
+package-lock.json
+
+# Large data files
+*.csv
+# *.json  # Allow ODL JSON files
+*.pdf
+*.xlsx
+*.parquet
+
+# Temporary files
+tmp/
+temp/
+*.tmp
